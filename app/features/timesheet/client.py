@@ -16,7 +16,9 @@ REMEMBER_ME_DAYS = 7
 
 
 class HemError(Exception):
-    pass
+    def __init__(self, message: str):
+        super().__init__(message)
+        self.message = message
 
 
 def monday_of(any_day: date) -> date:
