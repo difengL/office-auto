@@ -59,7 +59,7 @@
 **Interfaces:**
 - Produces: `security.hash_password(password: str) -> str`、`security.verify_password(password: str, stored: str) -> bool`
 
-- [ ] **Step 1: 安装 pytest 并建目录**
+- [x] **Step 1: 安装 pytest 并建目录**
 
 ```bash
 cd /Users/admin/meican-auto
@@ -69,7 +69,7 @@ touch app/core/__init__.py app/features/__init__.py tests/__init__.py
 mkdir -p app/static && touch app/static/.gitkeep   # StaticFiles 要求目录存在
 ```
 
-- [ ] **Step 2: 写失败的测试**
+- [x] **Step 2: 写失败的测试**
 
 创建 `tests/test_security.py`：
 
@@ -106,12 +106,12 @@ def test_verify_handles_malformed_hash():
     assert security.verify_password("x", "") is False
 ```
 
-- [ ] **Step 3: 运行测试确认失败**
+- [x] **Step 3: 运行测试确认失败**
 
 Run: `./.venv/bin/python -m pytest tests/test_security.py -v`
 Expected: FAIL — `ModuleNotFoundError: No module named 'app.core.security'`
 
-- [ ] **Step 4: 实现 security.py**
+- [x] **Step 4: 实现 security.py**
 
 创建 `app/core/security.py`：
 
@@ -153,12 +153,12 @@ def verify_password(password: str, stored: str) -> bool:
     return hmac.compare_digest(actual, expected)
 ```
 
-- [ ] **Step 5: 运行测试确认通过**
+- [x] **Step 5: 运行测试确认通过**
 
 Run: `./.venv/bin/python -m pytest tests/test_security.py -v`
 Expected: 5 passed
 
-- [ ] **Step 6: 提交**
+- [x] **Step 6: 提交**
 
 ```bash
 git add app/core/security.py app/core/__init__.py app/features/__init__.py tests/ app/static/.gitkeep
@@ -197,7 +197,7 @@ git commit -m "feat(core): 密码哈希与校验"
   - `db.Credential(feature_key, payload: dict, state: str, last_ok_at: int, last_error: str)`
   - `db.FeatureConfig(feature_key, enabled: bool, dry_run: bool, schedule: dict, options: dict)`
 
-- [ ] **Step 1: 写失败的测试**
+- [x] **Step 1: 写失败的测试**
 
 创建 `tests/test_core_db.py`：
 
@@ -308,12 +308,12 @@ def test_enabled_feature_pairs():
     assert (u.id, "meican") in pairs
 ```
 
-- [ ] **Step 2: 运行测试确认失败**
+- [x] **Step 2: 运行测试确认失败**
 
 Run: `./.venv/bin/python -m pytest tests/test_core_db.py -v`
 Expected: FAIL — `ImportError` / `AttributeError: module 'app.core.db' has no attribute ...`
 
-- [ ] **Step 3: 实现 core/db.py**
+- [x] **Step 3: 实现 core/db.py**
 
 创建 `app/core/db.py`：
 
@@ -732,12 +732,12 @@ def consecutive_failures(user_id: int, feature_key: str, job_id: str) -> int:
     return n
 ```
 
-- [ ] **Step 4: 运行测试确认通过**
+- [x] **Step 4: 运行测试确认通过**
 
 Run: `./.venv/bin/python -m pytest tests/test_core_db.py -v`
 Expected: 11 passed
 
-- [ ] **Step 5: 提交**
+- [x] **Step 5: 提交**
 
 ```bash
 git add app/core/db.py tests/test_core_db.py
@@ -765,7 +765,7 @@ git commit -m "feat(core): 多用户数据模型（用户/会话/功能凭据/�
   - `feature.Feature` 抽象基类
   - `feature.FeatureLoginError(Exception)`
 
-- [ ] **Step 1: 写失败的测试**
+- [x] **Step 1: 写失败的测试**
 
 创建 `tests/test_feature_contract.py`：
 
@@ -843,12 +843,12 @@ def test_job_context_reads_and_writes(tmp_path, monkeypatch):
     assert ctx.get_data("k")["v"] == 1
 ```
 
-- [ ] **Step 2: 运行测试确认失败**
+- [x] **Step 2: 运行测试确认失败**
 
 Run: `./.venv/bin/python -m pytest tests/test_feature_contract.py -v`
 Expected: FAIL — `ModuleNotFoundError: app.core.feature`
 
-- [ ] **Step 3: 实现 core/feature.py**
+- [x] **Step 3: 实现 core/feature.py**
 
 创建 `app/core/feature.py`：
 
@@ -972,12 +972,12 @@ class Feature(ABC):
         return []
 ```
 
-- [ ] **Step 4: 运行测试确认通过**
+- [x] **Step 4: 运行测试确认通过**
 
 Run: `./.venv/bin/python -m pytest tests/test_feature_contract.py -v`
 Expected: 6 passed
 
-- [ ] **Step 5: 提交**
+- [x] **Step 5: 提交**
 
 ```bash
 git add app/core/feature.py tests/test_feature_contract.py
@@ -1003,7 +1003,7 @@ git commit -m "feat(core): Feature 插件契约"
   - `runner.execute(user_id: int, feature_key: str, job_id: str) -> JobResult`
   - `runner.run_login(user_id: int, feature_key: str, payload: dict) -> dict`
 
-- [ ] **Step 1: 写失败的测试**
+- [x] **Step 1: 写失败的测试**
 
 创建 `tests/test_registry_runner.py`：
 
@@ -1164,12 +1164,12 @@ def test_execute_records_job_run():
     assert runs[0]["ok"] is True
 ```
 
-- [ ] **Step 2: 运行测试确认失败**
+- [x] **Step 2: 运行测试确认失败**
 
 Run: `./.venv/bin/python -m pytest tests/test_registry_runner.py -v`
 Expected: FAIL — `ModuleNotFoundError: app.core.registry`
 
-- [ ] **Step 3: 实现 registry.py**
+- [x] **Step 3: 实现 registry.py**
 
 创建 `app/core/registry.py`：
 
@@ -1204,7 +1204,7 @@ def clear() -> None:
     _registry.clear()
 ```
 
-- [ ] **Step 4: 实现 runner.py**
+- [x] **Step 4: 实现 runner.py**
 
 创建 `app/core/runner.py`：
 
@@ -1278,12 +1278,12 @@ def execute(user_id: int, feature_key: str, job_id: str) -> JobResult:
     return result
 ```
 
-- [ ] **Step 5: 运行测试确认通过**
+- [x] **Step 5: 运行测试确认通过**
 
 Run: `./.venv/bin/python -m pytest tests/test_registry_runner.py -v`
 Expected: 10 passed
 
-- [ ] **Step 6: 提交**
+- [x] **Step 6: 提交**
 
 ```bash
 git add app/core/registry.py app/core/runner.py tests/test_registry_runner.py
@@ -1304,7 +1304,7 @@ git commit -m "feat(core): 插件注册表与统一执行器"
 - Consumes: 无
 - Produces: `meican.client.MeicanClient`、`meican.client.MeicanError`、`meican.preference.PreferenceModel` 等（保持原签名，仅路径变化）
 
-- [ ] **Step 1: 复制文件到新位置**
+- [x] **Step 1: 复制文件到新位置**
 
 ```bash
 cd /Users/admin/meican-auto
@@ -1314,14 +1314,14 @@ git mv app/meican.py app/features/meican/client.py
 git mv app/preference.py app/features/meican/preference.py
 ```
 
-- [ ] **Step 2: 修正 preference.py 的导入**
+- [x] **Step 2: 修正 preference.py 的导入**
 
 `app/features/meican/preference.py` 无外部导入，保持原样即可。确认无 `from app.` 语句：
 
 Run: `grep -n "^from app\|^import app" app/features/meican/preference.py`
 Expected: 无输出
 
-- [ ] **Step 3: 写 preference 回归测试**
+- [x] **Step 3: 写 preference 回归测试**
 
 创建 `tests/test_meican_preference.py`：
 
@@ -1370,19 +1370,19 @@ def test_rank_returns_limit():
     assert len(top) == 3
 ```
 
-- [ ] **Step 4: 运行测试确认通过**
+- [x] **Step 4: 运行测试确认通过**
 
 Run: `./.venv/bin/python -m pytest tests/test_meican_preference.py -v`
 Expected: 5 passed
 
-- [ ] **Step 5: 检查 client.py 的导入路径**
+- [x] **Step 5: 检查 client.py 的导入路径**
 
 Run: `grep -n "^from \.\|^from app" app/features/meican/client.py`
 
 Run: `grep -n "^from app\|^import app" app/features/meican/client.py`
 Expected: 无输出（client.py 只依赖 httpx 与标准库）
 
-- [ ] **Step 6: 提交**
+- [x] **Step 6: 提交**
 
 ```bash
 git add app/features/meican/ tests/test_meican_preference.py
@@ -1408,7 +1408,7 @@ git commit -m "refactor: 美餐 client 与 preference 迁入 features/meican"
   - `meican.jobs.keepalive(payload: dict) -> bool`
   - `meican.feature.MeicanFeature`（实现 `Feature`）
 
-- [ ] **Step 1: 写失败的测试**
+- [x] **Step 1: 写失败的测试**
 
 创建 `tests/test_meican_feature.py`：
 
@@ -1486,12 +1486,12 @@ def test_run_job_dispatches_by_id(monkeypatch):
     assert r.message == "ordered"
 ```
 
-- [ ] **Step 2: 运行测试确认失败**
+- [x] **Step 2: 运行测试确认失败**
 
 Run: `./.venv/bin/python -m pytest tests/test_meican_feature.py -v`
 Expected: FAIL — `ModuleNotFoundError: app.features.meican.feature`
 
-- [ ] **Step 3: 创建 jobs.py**
+- [x] **Step 3: 创建 jobs.py**
 
 创建 `app/features/meican/jobs.py`，内容为**把现有 `app/service.py` 与 `app/keepalive.py` 的逻辑改写为无全局状态的纯函数**，凭据由 `payload` 传入，缓存由 `cache` dict 传入：
 
@@ -1717,7 +1717,7 @@ def keepalive(payload: dict) -> bool:
         return False
 ```
 
-- [ ] **Step 4: 创建 feature.py**
+- [x] **Step 4: 创建 feature.py**
 
 创建 `app/features/meican/feature.py`：
 
@@ -1809,12 +1809,12 @@ class MeicanFeature(Feature):
         return JobResult(False, f"未知任务：{job_id}")
 ```
 
-- [ ] **Step 5: 运行测试确认通过**
+- [x] **Step 5: 运行测试确认通过**
 
 Run: `./.venv/bin/python -m pytest tests/test_meican_feature.py -v`
 Expected: 4 passed
 
-- [ ] **Step 6: 提交**
+- [x] **Step 6: 提交**
 
 ```bash
 git add app/features/meican/ tests/test_meican_feature.py
@@ -1842,7 +1842,7 @@ git commit -m "feat(meican): 美餐插件（交互型凭据 + 订餐/保活任�
   - `timesheet.client.monday_of(any_day: date) -> date`
   - `timesheet.client.filled_dates(records: list[dict]) -> dict[str, float]`
 
-- [ ] **Step 1: 写失败的测试（日期纯函数，不打网络）**
+- [x] **Step 1: 写失败的测试（日期纯函数，不打网络）**
 
 创建 `tests/test_timesheet_client.py`：
 
@@ -1875,12 +1875,12 @@ def test_workdays_exclude_weekend():
     assert all(d.weekday() < 5 for d in days)
 ```
 
-- [ ] **Step 2: 运行测试确认失败**
+- [x] **Step 2: 运行测试确认失败**
 
 Run: `./.venv/bin/python -m pytest tests/test_timesheet_client.py -v`
 Expected: FAIL — `ModuleNotFoundError: app.features.timesheet.client`
 
-- [ ] **Step 3: 实现 client.py**
+- [x] **Step 3: 实现 client.py**
 
 创建 `app/features/timesheet/client.py`：
 
@@ -2008,12 +2008,12 @@ def filled_dates(records: list[dict]) -> dict[str, float]:
     return out
 ```
 
-- [ ] **Step 4: 运行测试确认通过**
+- [x] **Step 4: 运行测试确认通过**
 
 Run: `./.venv/bin/python -m pytest tests/test_timesheet_client.py -v`
 Expected: 5 passed
 
-- [ ] **Step 5: 提交**
+- [x] **Step 5: 提交**
 
 ```bash
 git add app/features/timesheet/ tests/test_timesheet_client.py
@@ -2036,7 +2036,7 @@ git commit -m "feat(timesheet): HEM 客户端与周日期工具"
   - `timesheet.jobs.run_weekly_submit(username, password, project_id, dry_run, today) -> JobResult`
   - `timesheet.feature.TimesheetFeature`
 
-- [ ] **Step 1: 写失败的测试（纯逻辑，不打网络）**
+- [x] **Step 1: 写失败的测试（纯逻辑，不打网络）**
 
 创建 `tests/test_timesheet_jobs.py`：
 
@@ -2085,12 +2085,12 @@ def test_plan_all_workdays_five():
     assert plan["total_hours"] == 40.0
 ```
 
-- [ ] **Step 2: 运行测试确认失败**
+- [x] **Step 2: 运行测试确认失败**
 
 Run: `./.venv/bin/python -m pytest tests/test_timesheet_jobs.py -v`
 Expected: FAIL — `ModuleNotFoundError: app.features.timesheet.jobs`
 
-- [ ] **Step 3: 实现 jobs.py**
+- [x] **Step 3: 实现 jobs.py**
 
 创建 `app/features/timesheet/jobs.py`：
 
@@ -2202,7 +2202,7 @@ def run_weekly_submit(username: str, password: str, project_id: str | None,
                      detail)
 ```
 
-- [ ] **Step 4: 实现 feature.py**
+- [x] **Step 4: 实现 feature.py**
 
 创建 `app/features/timesheet/feature.py`：
 
@@ -2312,12 +2312,12 @@ class TimesheetFeature(Feature):
         return [{"value": x["project_id"], "label": x["name"]} for x in projects]
 ```
 
-- [ ] **Step 5: 运行测试确认通过**
+- [x] **Step 5: 运行测试确认通过**
 
 Run: `./.venv/bin/python -m pytest tests/test_timesheet_jobs.py -v`
 Expected: 5 passed
 
-- [ ] **Step 6: 提交**
+- [x] **Step 6: 提交**
 
 ```bash
 git add app/features/timesheet/jobs.py app/features/timesheet/feature.py tests/test_timesheet_jobs.py
@@ -2341,7 +2341,7 @@ git commit -m "feat(timesheet): 工时插件（周填报 + 项目选择 + dry-ru
   - `scheduler.next_run(user_id: int, feature_key: str, job_id: str) -> str | None`
   - `scheduler.scheduler`（模块级 `AsyncIOScheduler` 实例）
 
-- [ ] **Step 1: 写失败的测试**
+- [x] **Step 1: 写失败的测试**
 
 创建 `tests/test_scheduler.py`：
 
@@ -2433,12 +2433,12 @@ def test_interval_job_created_with_jitter():
     assert job.trigger.jitter == 3 * 60
 ```
 
-- [ ] **Step 2: 运行测试确认失败**
+- [x] **Step 2: 运行测试确认失败**
 
 Run: `./.venv/bin/python -m pytest tests/test_scheduler.py -v`
 Expected: FAIL — `ModuleNotFoundError: app.core.scheduler`
 
-- [ ] **Step 3: 实现 scheduler.py**
+- [x] **Step 3: 实现 scheduler.py**
 
 创建 `app/core/scheduler.py`：
 
@@ -2534,12 +2534,12 @@ def start() -> None:
         scheduler.start()
 ```
 
-- [ ] **Step 4: 运行测试确认通过**
+- [x] **Step 4: 运行测试确认通过**
 
 Run: `./.venv/bin/python -m pytest tests/test_scheduler.py -v`
 Expected: 5 passed
 
-- [ ] **Step 5: 提交**
+- [x] **Step 5: 提交**
 
 ```bash
 git add app/core/scheduler.py tests/test_scheduler.py
@@ -2568,7 +2568,7 @@ git commit -m "feat(core): 按用户×功能×任务调度"
   - `POST /api/features/{key}/run`
   - `GET /api/features/{key}/runs`
 
-- [ ] **Step 1: 写失败的测试**
+- [x] **Step 1: 写失败的测试**
 
 创建 `tests/test_web_auth.py`：
 
@@ -2659,12 +2659,12 @@ def test_feature_config_update(client):
     assert client.get("/api/features/test").json()["config"]["enabled"] is True
 ```
 
-- [ ] **Step 2: 运行测试确认失败**
+- [x] **Step 2: 运行测试确认失败**
 
 Run: `./.venv/bin/python -m pytest tests/test_web_auth.py -v`
 Expected: FAIL（路由不存在）
 
-- [ ] **Step 3: 实现 core/web_auth.py**
+- [x] **Step 3: 实现 core/web_auth.py**
 
 创建 `app/core/web_auth.py`：
 
@@ -2689,7 +2689,7 @@ async def current_user(mc_session: str | None = Cookie(default=None)) -> db.User
     return user
 ```
 
-- [ ] **Step 4: 重写 main.py**
+- [x] **Step 4: 重写 main.py**
 
 先备份旧文件，再写入新内容：
 
@@ -2957,12 +2957,12 @@ def feature_runs(key: str, limit: int = 20,
     return {"runs": db.read_job_runs(user.id, key, limit)}
 ```
 
-- [ ] **Step 5: 运行测试确认通过**
+- [x] **Step 5: 运行测试确认通过**
 
 Run: `./.venv/bin/python -m pytest tests/test_web_auth.py -v`
 Expected: 7 passed
 
-- [ ] **Step 6: 提交**
+- [x] **Step 6: 提交**
 
 ```bash
 git add app/main.py app/core/web_auth.py tests/test_web_auth.py
@@ -2983,7 +2983,7 @@ git commit -m "feat(web): 系统账号认证与功能通用路由"
 - Consumes: Task 10 的所有 `/api/*` 路由
 - Produces: 三个页面
 
-- [ ] **Step 1: 创建共用样式**
+- [x] **Step 1: 创建共用样式**
 
 创建 `app/templates/_style.html`：
 
@@ -3042,7 +3042,7 @@ git commit -m "feat(web): 系统账号认证与功能通用路由"
 </style>
 ```
 
-- [ ] **Step 2: 创建 login.html**
+- [x] **Step 2: 创建 login.html**
 
 创建 `app/templates/login.html`：
 
@@ -3109,7 +3109,7 @@ $('#password').addEventListener('keydown', e => { if (e.key === 'Enter') $('#btn
 </html>
 ```
 
-- [ ] **Step 3: 创建 index.html**
+- [x] **Step 3: 创建 index.html**
 
 创建 `app/templates/index.html`：
 
@@ -3178,7 +3178,7 @@ boot();
 </html>
 ```
 
-- [ ] **Step 4: 创建 feature.html**
+- [x] **Step 4: 创建 feature.html**
 
 创建 `app/templates/feature.html`：
 
@@ -3380,7 +3380,7 @@ load().catch(e => toast(e.message,'err'));
 </html>
 ```
 
-- [ ] **Step 5: 启动服务人工验证**
+- [x] **Step 5: 启动服务人工验证**
 
 ```bash
 cd /Users/admin/meican-auto
@@ -3393,7 +3393,7 @@ curl -sS -o /dev/null -w '首页   %{http_code}\n' http://127.0.0.1:8765/
 
 Expected: 两个 200。浏览器打开 http://127.0.0.1:8765/login 注册并登录，能看到两张功能卡片。
 
-- [ ] **Step 6: 提交**
+- [x] **Step 6: 提交**
 
 ```bash
 git add app/templates/
@@ -3413,7 +3413,7 @@ git commit -m "feat(web): 登录页、功能总览、通用功能面板"
 - Consumes: 全部
 - Produces: 可运行的最终版本
 
-- [ ] **Step 1: 确认旧模块无引用**
+- [x] **Step 1: 确认旧模块无引用**
 
 ```bash
 cd /Users/admin/meican-auto
@@ -3422,7 +3422,7 @@ grep -rn "from .db import\|from .auth import\|from .service import\|from .keepal
 
 Expected: `无残留引用`
 
-- [ ] **Step 2: 删除旧模块**
+- [x] **Step 2: 删除旧模块**
 
 ```bash
 git rm app/db.py app/service.py app/keepalive.py app/auth.py 2>/dev/null
@@ -3431,12 +3431,12 @@ ls app/*.py
 
 Expected: 只剩 `app/__init__.py` 与 `app/main.py`
 
-- [ ] **Step 3: 全量测试**
+- [x] **Step 3: 全量测试**
 
 Run: `./.venv/bin/python -m pytest tests/ -v`
 Expected: 全部通过（约 63 项）
 
-- [ ] **Step 4: 更新 run.sh**
+- [x] **Step 4: 更新 run.sh**
 
 ```bash
 cat > run.sh <<'EOF'
@@ -3447,7 +3447,7 @@ EOF
 chmod +x run.sh
 ```
 
-- [ ] **Step 5: 更新 README**
+- [x] **Step 5: 更新 README**
 
 创建 `README.md`（完整替换）：
 
@@ -3507,7 +3507,7 @@ app/templates/   通用页面
 ```
 ```
 
-- [ ] **Step 6: 归档旧库（迁移说明的落地动作）**
+- [x] **Step 6: 归档旧库（迁移说明的落地动作）**
 
 旧数据不迁移，但保留可回退：
 
@@ -3522,7 +3522,7 @@ ls data/legacy/
 
 Expected: 列出旧的 `meican.db` 与 4 个 JSON 文件。`data/app.db` 是全新库，不含旧数据。
 
-- [ ] **Step 7: 重启服务做冒烟测试**
+- [x] **Step 7: 重启服务做冒烟测试**
 
 ```bash
 pkill -f "uvicorn app.main" 2>/dev/null; sleep 1
@@ -3535,7 +3535,7 @@ tail -3 data/server.log
 
 Expected: `login=200 index=200`，日志无 ERROR
 
-- [ ] **Step 8: HEM 真实账号 dry-run 验证（人工）**
+- [x] **Step 8: HEM 真实账号 dry-run 验证（人工）**
 
 这是规格"测试/集成"章节要求的验证，需手动执行：
 
@@ -3550,7 +3550,7 @@ Expected: `login=200 index=200`，日志无 ERROR
 
 Expected: 第 7 步出现演练计划；第 8 步 HEM 上无提交记录。若第 7 步直接报"已提交审批"，说明 dry-run 逻辑有缺陷，必须停下排查。
 
-- [ ] **Step 9: 提交**
+- [x] **Step 9: 提交**
 
 ```bash
 git add -A
@@ -3564,13 +3564,13 @@ git commit -m "chore: 清理旧模块，归档旧库，更新文档与启动脚�
 **Files:**
 - Rename: 项目目录 `meican-auto` → `office-auto`
 
-- [ ] **Step 1: 停服务**
+- [x] **Step 1: 停服务**
 
 ```bash
 pkill -f "uvicorn app.main" 2>/dev/null; sleep 1
 ```
 
-- [ ] **Step 2: 改名**
+- [x] **Step 2: 改名**
 
 ```bash
 cd /Users/admin
@@ -3578,7 +3578,7 @@ mv meican-auto office-auto
 cd office-auto
 ```
 
-- [ ] **Step 3: 验证**
+- [x] **Step 3: 验证**
 
 ```bash
 pwd
@@ -3587,7 +3587,7 @@ pwd
 
 Expected: 路径为 `/Users/admin/office-auto`，测试全部通过
 
-- [ ] **Step 4: 启动**
+- [x] **Step 4: 启动**
 
 ```bash
 nohup ./.venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8765 > data/server.log 2>&1 &
@@ -3595,7 +3595,7 @@ sleep 5
 curl -sS -o /dev/null -w 'index=%{http_code}\n' http://127.0.0.1:8765/
 ```
 
-- [ ] **Step 5: 提交**
+- [x] **Step 5: 提交**
 
 ```bash
 git add -A
@@ -3608,13 +3608,53 @@ git commit -m "chore: 项目改名为 office-auto"
 
 全部任务完成后逐项确认：
 
-- [ ] `pytest tests/ -v` 全部通过
-- [ ] 能注册并登录系统账号，刷新页面不掉线
-- [ ] 首页显示两张功能卡片，状态正确
+- [x] `pytest tests/ -v` 全部通过
+- [x] 能注册并登录系统账号，刷新页面不掉线
+- [x] 首页显示两张功能卡片，状态正确
 - [ ] 美餐功能页：输入手机号+验证码可登录，卡片变「已登录」
 - [ ] 工时功能页：输入 HEM 账号密码可登录，项目下拉有数据
 - [ ] 工时「立即执行」在 dry-run 下产出计划，不调用提交接口
 - [ ] 关闭 dry-run 后执行，真实提交（需人工确认时机）
-- [ ] 修改触发时间后，`next_run` 变化正确
-- [ ] 两个不同账号登录，数据互不可见
-- [ ] `data/app.db` 里 `feature_credentials.payload` 不含明文
+- [x] 修改触发时间后，`next_run` 变化正确
+- [x] 两个不同账号登录，数据互不可见
+- [x] `data/platform.db` 里 `feature_credentials.payload` 不含明文（实际库名是 platform.db）
+
+---
+
+## 执行记录（2026-11-16 实施）
+
+13 个 Task 全部完成，67 项测试通过，服务在 http://127.0.0.1:8765 运行。
+剩余 4 项验收需真实凭据，须人工执行（见上）。
+
+### 实施中修正的计划缺陷
+
+| # | 位置 | 问题 | 处理 |
+|---|---|---|---|
+| 1 | Task 9 `_cron_trigger`/`_interval_trigger` | `jitter * 60` 把「秒」当「分钟」，美餐 180 秒抖动会变成 3 小时，错过订餐窗口 | 去掉 `* 60`，同步改测试期望 |
+| 2 | Task 9 `scheduler.start()` | 模块级单例在上次事件循环关闭后仍报 `running`，`add_job` 往死循环投递唤醒 → `RuntimeError`。uvicorn reload 与测试多次 lifespan 都会踩 | 检测 `_eventloop.is_closed()`，复位 `state` 后重绑 |
+| 3 | Task 8 `HemError` | 裸 `Exception` 无 `message` 属性，但 jobs/feature 多处用 `exc.message` → `AttributeError` | 补 `message` 属性，与 `MeicanError` 一致 |
+| 4 | Task 10/11 前后端契约 | 前端读 `credential_state`/`fields`/`d.info`，API 返回 `state`/`credential_fields`/平铺；列表接口缺 `jobs.next_run` | 以已测过的 API 为准修前端，列表接口补 `jobs` |
+| 5 | Task 10 `TemplateResponse` | 旧式 `(name, {"request":...})` 在当前 Starlette 下抛 `unhashable type: dict`，三个页面全 500 | 改新签名 `(request, name, context)` |
+| 6 | Task 2 `_load_key()` | 真实 `data/secret.key` 是旧版留下的 **32 字节原始随机字节**，不是合法 Fernet key，保存凭据即 `ValueError`。测试用临时新密钥所以没暴露 | 兼容三形态：合法 key 直接用 / 原始字节按旧派生 `base64(sha256(raw))` / 不存在则生成。补 4 项回归测试 |
+| 7 | Task 7 HEM 契约 | 与规格（标注「实测确认」）四处出入：域名 `.com`、项目列表路径与参数、cookie 判定 `JSESSIONID`、项目默认规则 | 全部以规格为准修正，见 commit `543b88b` |
+| 8 | Task 12 `.gitignore` | `data/*.db` 不覆盖子目录，归档时 `data/legacy/credentials.json` 与 `meican.db` 被提交进 git | 改为忽略整个 `data/`，`git rm --cached` 并 amend 掉该提交（无远程，未外泄） |
+| 9 | Task 13 改名 | `.venv/bin/*` 的 shebang 与 `pyvenv.cfg` 写死旧绝对路径，`run.sh` 会失效 | 改名后批量修 shebang |
+
+### 与计划的有意偏离
+
+- **旧 README 的领域知识**（token TTL 规律、验证码 4 位、订餐窗口 09:00–16:00、发码限流）
+  没有随 README 替换丢弃，迁到 `docs/business/meican.md`（遵循「CLAUDE.md 只放规范，
+  业务知识进 docs/」的全局铁律）。
+- **`data/` 整体不入库**：含真实凭据与密钥，一律本地保留。
+- 未安装 `pytest-asyncio`：计划全部用 `asyncio.run` 包装同步测试，不需要该插件。
+
+### 仍需人工完成
+
+1. 美餐短信登录（需手机收码）
+2. HEM 账号密码登录 + 项目下拉验证
+3. 工时 dry-run 执行，并到 https://hem.100credit.cn 核对**本周工时未被提交**
+4. 确认无误后再关闭 dry-run
+
+> 注意：`jobs.run_weekly_submit` 目前只实现了「检查 + 提交周报」，
+> **尚未实现自动补填缺失工时**（规格第 3 步「无记录 → 填入 8 小时」）。
+> 缺填时会如实告警并返回 `ok=False`，不会静默跳过。补填接口需另行实测确认。
