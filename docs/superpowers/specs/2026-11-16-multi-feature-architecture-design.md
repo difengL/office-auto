@@ -71,7 +71,7 @@ office-auto/                    （由 meican-auto 改名）
         jobs.py                 周填报任务
     main.py                     路由聚合 + 插件装配
     templates/
-      base.html                 布局（顶栏 + 侧边栏）
+      _style.html               共用样式片段（模板 include）
       login.html                系统登录 / 注册
       index.html                功能卡片总览
       feature.html              通用功能面板（按插件声明渲染）
@@ -163,8 +163,8 @@ class Feature(ABC):
         """用已存凭据自动重登。仅 PASSWORD 型需要实现。"""
         return False
 
-    async def on_options_refresh(self, user_id: int) -> list[dict]:
-        """刷新可选项目列表等。可选实现。"""
+    async def refresh_options(self, user_id: int) -> list[dict]:
+        """刷新可选项目列表等。可选实现。返回 [{"value":..., "label":...}]"""
         return []
 ```
 

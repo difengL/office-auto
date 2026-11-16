@@ -10,7 +10,7 @@
 
 ## Global Constraints
 
-- 工作目录：`/Users/admin/meican-auto`（Task 14 改名为 `office-auto`）
+- 工作目录：`/Users/admin/meican-auto`（Task 13 改名为 `office-auto`）
 - Python 解释器：`./.venv/bin/python`，所有命令在项目根目录执行
 - `core/` 目录**禁止** import `features/` 下任何模块
 - 密码哈希用标准库 `hashlib.pbkdf2_hmac`，不得引入第三方密码库
@@ -66,6 +66,7 @@ cd /Users/admin/meican-auto
 ./.venv/bin/pip install -q pytest
 mkdir -p app/core app/features tests
 touch app/core/__init__.py app/features/__init__.py tests/__init__.py
+mkdir -p app/static && touch app/static/.gitkeep   # StaticFiles 要求目录存在
 ```
 
 - [ ] **Step 2: 写失败的测试**
@@ -160,7 +161,7 @@ Expected: 5 passed
 - [ ] **Step 6: 提交**
 
 ```bash
-git add app/core/security.py app/core/__init__.py app/features/__init__.py tests/
+git add app/core/security.py app/core/__init__.py app/features/__init__.py tests/ app/static/.gitkeep
 git commit -m "feat(core): 密码哈希与校验"
 ```
 
@@ -734,7 +735,7 @@ def consecutive_failures(user_id: int, feature_key: str, job_id: str) -> int:
 - [ ] **Step 4: 运行测试确认通过**
 
 Run: `./.venv/bin/python -m pytest tests/test_core_db.py -v`
-Expected: 10 passed
+Expected: 11 passed
 
 - [ ] **Step 5: 提交**
 
@@ -759,7 +760,7 @@ git commit -m "feat(core): 多用户数据模型（用户/会话/功能凭据/�
   - `feature.FieldSpec(name, label, type="text", secret=False, required=True)`
   - `feature.JobSpec(job_id, name, trigger, default, jitter=0, editable=True)`
   - `feature.OptionSpec(name, label, type="select", source="", refreshable=False)`
-  - `feature.JobContext(user_id, feature_key, job_id, dry_run, options, get_data, set_data)`
+  - `feature.JobContext(user_id, feature_key, job_id, dry_run, options)`，方法 `get_data(key, default=None)` / `set_data(key, value)`
   - `feature.JobResult(ok, message="", detail={})`
   - `feature.Feature` 抽象基类
   - `feature.FeatureLoginError(Exception)`
@@ -833,7 +834,8 @@ def test_job_context_reads_and_writes(tmp_path, monkeypatch):
     monkeypatch.setattr(db, "DB_PATH", tmp_path / "t.db")
     monkeypatch.setattr(db, "KEY_PATH", tmp_path / "t.key")
     db.init_db()
-    ctx = JobContext(1, "dummy", "tick", True, {"p": "1"})
+    u = db.create_user("ctxuser", "HASH", "U")      # feature_data 有外键，必须先建用户
+    ctx = JobContext(u.id, "dummy", "tick", True, {"p": "1"})
     assert ctx.dry_run is True
     assert ctx.options["p"] == "1"
     assert ctx.get_data("k", default="d") == "d"
@@ -1144,7 +1146,6 @@ def test_execute_interactive_kind_never_relogins():
     u = _user()
     f = InteractiveFeature()
     registry.register(f)
-    runner.run_login(u.id, "fake" if False else "inter", {"username": "ok"}) if False else None
     runner.run_login(u.id, "inter", {"username": "ok"})
     f.alive = False
     r = runner.execute(u.id, "inter", "j")
@@ -1262,6 +1263,9 @@ def execute(user_id: int, feature_key: str, job_id: str) -> JobResult:
                 return JobResult(False, "登录态失效，请重新登录该功能")
 
         cfg = db.load_feature_config(user_id, feature_key)
+        # 从未保存过配置时，dry_run 用插件声明的默认值
+        if not db.fdata_get(user_id, feature_key, "__config_saved__", default=False):
+            cfg.dry_run = feature.dry_run_default
         ctx = JobContext(user_id, feature_key, job_id, cfg.dry_run, cfg.options)
         try:
             return await feature.run_job(user_id, job_id, ctx)
@@ -1277,7 +1281,7 @@ def execute(user_id: int, feature_key: str, job_id: str) -> JobResult:
 - [ ] **Step 5: 运行测试确认通过**
 
 Run: `./.venv/bin/python -m pytest tests/test_registry_runner.py -v`
-Expected: 9 passed
+Expected: 10 passed
 
 - [ ] **Step 6: 提交**
 
@@ -1375,7 +1379,8 @@ Expected: 5 passed
 
 Run: `grep -n "^from \.\|^from app" app/features/meican/client.py`
 
-`client.py` 只依赖 httpx 与标准库，应当无内部导入。若有 `from . import` 之外的问题，按实际修正。
+Run: `grep -n "^from app\|^import app" app/features/meican/client.py`
+Expected: 无输出（client.py 只依赖 httpx 与标准库）
 
 - [ ] **Step 6: 提交**
 
@@ -1398,7 +1403,8 @@ git commit -m "refactor: 美餐 client 与 preference 迁入 features/meican"
 - Produces:
   - `meican.jobs.fetch_history(payload: dict, cache: dict) -> list[dict]`
   - `meican.jobs.recommend(payload: dict, cache: dict, target_day: date, limit: int) -> dict`
-  - `meican.jobs.do_order(payload: dict, cache: dict, dish: dict | None, dry_run: bool) -> dict`
+  - `meican.jobs.do_order(payload: dict, cache: dict, target_day: date, dish: dict | None, dry_run: bool) -> JobResult`
+  - `meican.jobs.check_status(payload: dict, target_day: date) -> dict`
   - `meican.jobs.keepalive(payload: dict) -> bool`
   - `meican.feature.MeicanFeature`（实现 `Feature`）
 
@@ -1409,8 +1415,17 @@ git commit -m "refactor: 美餐 client 与 preference 迁入 features/meican"
 ```python
 import pytest
 
+from app.core import db
 from app.core.feature import CredentialKind, FeatureLoginError, JobContext
 from app.features.meican.feature import MeicanFeature
+
+
+@pytest.fixture(autouse=True)
+def tmp_db(tmp_path, monkeypatch):
+    monkeypatch.setattr(db, "DB_PATH", tmp_path / "t.db")
+    monkeypatch.setattr(db, "KEY_PATH", tmp_path / "t.key")
+    db.init_db()
+    yield
 
 
 def test_metadata():
@@ -1448,19 +1463,25 @@ def test_login_stores_token_from_client(monkeypatch):
                     "expiry": "3600", "tokenType": "bearer"}
 
     monkeypatch.setattr("app.features.meican.feature.MeicanClient", lambda: FakeClient())
-    monkeypatch.setattr("app.features.meican.feature.db.save_credential", lambda *a, **k: None)
-    info = asyncio.run(f.login(1, {"phone": "17600610776", "code": "1234"}))
+    u = db.create_user("m1", "H", "M")
+    payload = {"phone": "17600610776", "code": "1234"}
+    info = asyncio.run(f.login(u.id, payload))
     assert info["display"] == "张三"
+    # 一次性验证码不得留在 payload 里
+    assert "code" not in payload
+    assert payload["accessToken"] == "AT"
 
 
 def test_run_job_dispatches_by_id(monkeypatch):
     import asyncio
     from app.core.feature import JobResult
+    u = db.create_user("m2", "H", "M")
+    db.save_credential(u.id, "meican", {"accessToken": "AT"}, "active")
     f = MeicanFeature()
     monkeypatch.setattr("app.features.meican.feature.jobs.do_order",
                         lambda *a, **k: JobResult(True, "ordered"))
-    ctx = JobContext(1, "meican", "order", True, {})
-    r = asyncio.run(f.run_job(1, "order", ctx))
+    ctx = JobContext(u.id, "meican", "order", True, {})
+    r = asyncio.run(f.run_job(u.id, "order", ctx))
     assert r.ok is True
     assert r.message == "ordered"
 ```
@@ -1816,9 +1837,10 @@ git commit -m "feat(meican): 美餐插件（交互型凭据 + 订餐/保活任�
   - `.login() -> dict`（返回会话信息，含 `uid`、`username`、`name`）
   - `.list_projects() -> list[dict]`（每项含 `project_id`、`name`）
   - `.week_records(start: date, end: date) -> list[dict]`
-  - `.submit(username: str, week_date: date) -> dict`
+  - `.submit(week_date: date, weekly_type: int = 1) -> dict`
   - `timesheet.client.workdays_of_week(any_day: date) -> list[date]`（周一到周五）
   - `timesheet.client.monday_of(any_day: date) -> date`
+  - `timesheet.client.filled_dates(records: list[dict]) -> dict[str, float]`
 
 - [ ] **Step 1: 写失败的测试（日期纯函数，不打网络）**
 
@@ -2397,15 +2419,18 @@ def test_user_schedule_override_applied():
     assert "minute='5'" in trigger
 
 
-def test_interval_job_created_with_jitter_range():
+def test_interval_job_created_with_jitter():
+    from datetime import timedelta
     u = db.create_user("u", "H", "U")
     db.save_feature_config(u.id, "sched",
                            db.FeatureConfig("sched", True, True, {}, {}))
     scheduler.reschedule_user(u.id)
     job = scheduler.scheduler.get_job(f"sched:tick:{u.id}")
     assert job is not None
-    # jitter=3 表示 27~33 分钟
-    assert "minute=" in str(job.trigger)
+    # IntervalTrigger 的 interval 就是 30 分钟基准
+    assert job.trigger.interval == timedelta(minutes=30)
+    # jitter 交给 APScheduler 每轮执行时随机，不在建任务时固定
+    assert job.trigger.jitter == 3 * 60
 ```
 
 - [ ] **Step 2: 运行测试确认失败**
@@ -2439,16 +2464,19 @@ def job_id(feature_key: str, jid: str, user_id: int) -> str:
 
 
 def _interval_trigger(spec, override: dict):
+    """interval 触发器。jitter 交给 APScheduler，每轮执行时随机偏移。
+
+    APScheduler 的 jitter 单位是秒。
+    """
     minutes = int(override.get("minutes") or spec.default.get("minutes") or 20)
+    kw: dict = {"minutes": minutes}
     if spec.jitter:
-        minutes = max(1, minutes + random.randint(-spec.jitter, spec.jitter))
-    return {"trigger": "interval", "minutes": minutes}
+        kw["jitter"] = spec.jitter * 60
+    return kw
 
 
 def _cron_trigger(spec, override: dict):
-    params = {**spec.default, **override}
-    params.pop("day_of_week", None) if False else None
-    return {"trigger": "cron", **params}
+    return {**spec.default, **override}
 
 
 def reschedule_user(user_id: int) -> None:
@@ -2467,11 +2495,11 @@ def reschedule_user(user_id: int) -> None:
             jid = job_id(feature.key, spec.job_id, user_id)
             override = cfg.schedule.get(spec.job_id, {}) if spec.editable else {}
             if spec.trigger == "interval":
-                trigger = _interval_trigger(spec, override)
+                kw = _interval_trigger(spec, override)
+                ttype = "interval"
             else:
-                trigger = _cron_trigger(spec, override)
-            kw = dict(trigger)
-            ttype = kw.pop("trigger")
+                kw = _cron_trigger(spec, override)
+                ttype = "cron"
             scheduler.add_job(
                 _run_job, ttype, args=[user_id, feature.key, spec.job_id],
                 id=jid, replace_existing=True, **kw,
@@ -2485,7 +2513,11 @@ def reschedule_all() -> None:
 
 def next_run(user_id: int, feature_key: str, jid: str) -> str | None:
     job = scheduler.get_job(job_id(feature_key, jid, user_id))
-    return str(job.next_run_time) if job else None
+    if not job:
+        return None
+    # scheduler 未启动时 next_run_time 属性不存在
+    nxt = getattr(job, "next_run_time", None)
+    return str(nxt) if nxt else None
 
 
 async def _run_job(user_id: int, feature_key: str, jid: str) -> None:
@@ -2507,22 +2539,7 @@ def start() -> None:
 Run: `./.venv/bin/python -m pytest tests/test_scheduler.py -v`
 Expected: 5 passed
 
-- [ ] **Step 5: 清理 `_cron_trigger` 里的死代码**
-
-`_cron_trigger` 中有一行无意义的表达式，改为：
-
-```python
-def _cron_trigger(spec, override: dict):
-    params = {**spec.default, **override}
-    return {"trigger": "cron", **params}
-```
-
-- [ ] **Step 6: 重新运行测试**
-
-Run: `./.venv/bin/python -m pytest tests/test_scheduler.py -v`
-Expected: 5 passed
-
-- [ ] **Step 7: 提交**
+- [ ] **Step 5: 提交**
 
 ```bash
 git add app/core/scheduler.py tests/test_scheduler.py
@@ -2678,7 +2695,8 @@ async def current_user(mc_session: str | None = Cookie(default=None)) -> db.User
 
 ```bash
 cd /Users/admin/meican-auto
-cp app/main.py docs/legacy-main.py.bak
+mkdir -p data/backup
+cp app/main.py data/backup/main.py.bak        # data/ 已被 .gitignore 覆盖，不会进仓库
 ```
 
 然后用下面的完整内容**替换** `app/main.py`：
@@ -2696,7 +2714,7 @@ from pathlib import Path
 
 from fastapi import Cookie, Depends, FastAPI, HTTPException, Request, Response
 from fastapi.responses import HTMLResponse
-from fastapi.staticfiles import StaticFiles
+from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
 
 from .core import db, registry, runner, scheduler, security, web_auth
@@ -2704,7 +2722,8 @@ from .core.feature import FeatureLoginError, FeatureState
 
 BASE_DIR = Path(__file__).resolve().parent
 app = FastAPI(title="办公自动化平台")
-app.mount("/static", StaticFiles(directory=BASE_DIR / "static"), name="static")
+# 用 Jinja2 渲染，模板里才能用 {% include '_style.html' %}
+templates = Jinja2Templates(directory=BASE_DIR / "templates")
 
 
 # ---------------- 启动装配 ----------------
@@ -2728,18 +2747,19 @@ def startup() -> None:
 # ---------------- 页面 ----------------
 
 @app.get("/", response_class=HTMLResponse)
-def index() -> HTMLResponse:
-    return HTMLResponse((BASE_DIR / "templates" / "index.html").read_text("utf-8"))
+def index(request: Request) -> HTMLResponse:
+    return templates.TemplateResponse("index.html", {"request": request})
 
 
 @app.get("/login", response_class=HTMLResponse)
-def login_page() -> HTMLResponse:
-    return HTMLResponse((BASE_DIR / "templates" / "login.html").read_text("utf-8"))
+def login_page(request: Request) -> HTMLResponse:
+    return templates.TemplateResponse("login.html", {"request": request})
 
 
 @app.get("/feature/{key}", response_class=HTMLResponse)
-def feature_page(key: str) -> HTMLResponse:
-    return HTMLResponse((BASE_DIR / "templates" / "feature.html").read_text("utf-8"))
+def feature_page(request: Request, key: str) -> HTMLResponse:
+    return templates.TemplateResponse("feature.html",
+                                      {"request": request, "feature_key": key})
 
 
 # ---------------- 账号 ----------------
@@ -2804,12 +2824,21 @@ def _feature_or_404(key: str):
     return f
 
 
+def _effective_config(user_id: int, feature):
+    """取配置；从未保存过时，dry_run 用插件声明的默认值。"""
+    cfg = db.load_feature_config(user_id, feature.key)
+    saved = db.fdata_get(user_id, feature.key, "__config_saved__", default=False)
+    if not saved:
+        cfg.dry_run = feature.dry_run_default
+    return cfg
+
+
 @app.get("/api/features")
 def list_features(user: db.User = Depends(web_auth.current_user)):
     out = []
     for f in registry.all():
         cred = db.load_credential(user.id, f.key)
-        cfg = db.load_feature_config(user.id, f.key)
+        cfg = _effective_config(user.id, f)
         jobs = []
         for spec in f.default_jobs:
             jobs.append({
@@ -2831,7 +2860,7 @@ def list_features(user: db.User = Depends(web_auth.current_user)):
 def feature_detail(key: str, user: db.User = Depends(web_auth.current_user)):
     f = _feature_or_404(key)
     cred = db.load_credential(user.id, key)
-    cfg = db.load_feature_config(user.id, key)
+    cfg = _effective_config(user.id, f)
     return {
         "key": f.key, "name": f.name, "description": f.description,
         "credential_kind": f.credential_kind.value,
@@ -2850,6 +2879,9 @@ def feature_detail(key: str, user: db.User = Depends(web_auth.current_user)):
                            "refreshable": o.refreshable} for o in f.extra_options],
         "config": {"enabled": cfg.enabled, "dry_run": cfg.dry_run,
                    "schedule": cfg.schedule, "options": cfg.options},
+        # 任一任务连续失败 ≥3 次，界面应置红
+        "failing": any(db.consecutive_failures(user.id, key, s.job_id) >= 3
+                       for s in f.default_jobs),
         "option_values": db.fdata_get(user.id, key, "projects", default=[]),
         "runs": db.read_job_runs(user.id, key, limit=20),
         "dry_run_default": f.dry_run_default,
@@ -2877,8 +2909,8 @@ class ConfigBody(BaseModel):
 @app.post("/api/features/{key}/config")
 def feature_config(key: str, body: ConfigBody,
                    user: db.User = Depends(web_auth.current_user)):
-    _feature_or_404(key)
-    cfg = db.load_feature_config(user.id, key)
+    f = _feature_or_404(key)
+    cfg = _effective_config(user.id, f)
     data = body.model_dump(exclude_none=True)
     if "schedule" in data:
         cfg.schedule = data["schedule"]
@@ -2887,6 +2919,7 @@ def feature_config(key: str, body: ConfigBody,
     cfg.enabled = data.get("enabled", cfg.enabled)
     cfg.dry_run = data.get("dry_run", cfg.dry_run)
     db.save_feature_config(user.id, key, cfg)
+    db.fdata_set(user.id, key, "__config_saved__", True)   # 标记已初始化，之后不再套用插件默认
     scheduler.reschedule_user(user.id)
     return {"ok": True, "config": {"enabled": cfg.enabled, "dry_run": cfg.dry_run,
                                    "schedule": cfg.schedule, "options": cfg.options}}
@@ -2932,7 +2965,7 @@ Expected: 7 passed
 - [ ] **Step 6: 提交**
 
 ```bash
-git add app/main.py app/core/web_auth.py tests/test_web_auth.py docs/
+git add app/main.py app/core/web_auth.py tests/test_web_auth.py
 git commit -m "feat(web): 系统账号认证与功能通用路由"
 ```
 
@@ -3291,7 +3324,8 @@ function renderRunButtons() {
 async function load() {
   detail = await api('/api/features/' + KEY);
   $('#fname').textContent = detail.name;
-  const [label, cls] = STATE_LABEL[detail.credential_state] || ['未知',''];
+  let [label, cls] = STATE_LABEL[detail.credential_state] || ['未知',''];
+  if (detail.failing) { label = '连续失败'; cls = 'err'; }   // 任务连续失败 3 次置红
   $('#stateBadge').textContent = label;
   $('#stateBadge').className = 'badge ' + cls;
   $('#credHint').textContent = detail.credential_kind === 'interactive'
@@ -3400,7 +3434,7 @@ Expected: 只剩 `app/__init__.py` 与 `app/main.py`
 - [ ] **Step 3: 全量测试**
 
 Run: `./.venv/bin/python -m pytest tests/ -v`
-Expected: 全部通过（约 47 项）
+Expected: 全部通过（约 63 项）
 
 - [ ] **Step 4: 更新 run.sh**
 
@@ -3473,7 +3507,22 @@ app/templates/   通用页面
 ```
 ```
 
-- [ ] **Step 6: 重启服务做冒烟测试**
+- [ ] **Step 6: 归档旧库（迁移说明的落地动作）**
+
+旧数据不迁移，但保留可回退：
+
+```bash
+cd /Users/admin/meican-auto
+mkdir -p data/legacy
+mv data/meican.db data/legacy/meican.db 2>/dev/null
+mv data/credentials.json data/config.json data/activity.jsonl \
+   data/restaurant_names.json data/legacy/ 2>/dev/null
+ls data/legacy/
+```
+
+Expected: 列出旧的 `meican.db` 与 4 个 JSON 文件。`data/app.db` 是全新库，不含旧数据。
+
+- [ ] **Step 7: 重启服务做冒烟测试**
 
 ```bash
 pkill -f "uvicorn app.main" 2>/dev/null; sleep 1
@@ -3486,11 +3535,26 @@ tail -3 data/server.log
 
 Expected: `login=200 index=200`，日志无 ERROR
 
-- [ ] **Step 7: 提交**
+- [ ] **Step 8: HEM 真实账号 dry-run 验证（人工）**
+
+这是规格"测试/集成"章节要求的验证，需手动执行：
+
+1. 浏览器打开 http://127.0.0.1:8765/login ，注册并登录系统账号
+2. 进入「工时填报」功能页
+3. 填入 HEM 用户名 + 密码，点「保存并登录」
+4. 确认「当前身份」显示姓名，项目下拉有数据
+5. 确认「演练模式」默认**已勾选**
+6. 点「立即执行：每周工时填报」
+7. 查看运行记录，应显示类似：`演练：将在 5 个工作日填 8.0h，共 40.0h`
+8. **确认 HEM 网站上本周工时未被提交**（打开 https://hem.100credit.cn/myWorkhours 核对）
+
+Expected: 第 7 步出现演练计划；第 8 步 HEM 上无提交记录。若第 7 步直接报"已提交审批"，说明 dry-run 逻辑有缺陷，必须停下排查。
+
+- [ ] **Step 9: 提交**
 
 ```bash
 git add -A
-git commit -m "chore: 清理旧模块，更新文档与启动脚本"
+git commit -m "chore: 清理旧模块，归档旧库，更新文档与启动脚本"
 ```
 
 ---

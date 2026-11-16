@@ -8,3 +8,4 @@ data/secret.key
 data/server.log
 data/backup-*/
 .playwright-mcp/
+data/backup/
