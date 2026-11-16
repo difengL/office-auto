@@ -1,0 +1,10 @@
+{
+  "phone": "17600610776",
+  "enabled": true,
+  "schedule_time": "15:30",
+  "order_target": "next_day",
+  "prefer_restaurant": "",
+  "max_price": 25.0,
+  "dry_run": true,
+  "notify_webhook": ""
+}
