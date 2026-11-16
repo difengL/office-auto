@@ -1,421 +1,58 @@
 <!DOCTYPE html>
 <html lang="zh-CN">
 <head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>美餐自动订餐</title>
-<style>
-  :root{
-    --bg:#0f1115; --panel:#171a21; --panel-2:#1d212a; --line:#272c37;
-    --text:#e6e8ee; --muted:#8b93a7; --accent:#ff7a45; --accent-2:#ffb020;
-    --ok:#3ecf8e; --warn:#e8b424; --err:#ec5b5b; --radius:14px;
-  }
-  *{box-sizing:border-box}
-  body{
-    margin:0; background:radial-gradient(1200px 600px at 20% -10%,#1b2030 0%,var(--bg) 55%);
-    color:var(--text); font:15px/1.55 -apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif;
-    min-height:100vh; padding:28px 20px 60px;
-  }
-  .wrap{max-width:1080px;margin:0 auto}
-  header{display:flex;align-items:center;gap:14px;margin-bottom:26px;flex-wrap:wrap}
-  h1{font-size:22px;margin:0;letter-spacing:.5px}
-  .badge{
-    font-size:12px;padding:3px 10px;border-radius:999px;border:1px solid var(--line);
-    color:var(--muted);background:var(--panel);
-  }
-  .badge.on{color:var(--ok);border-color:#1f4d3a;background:#10231b}
-  .badge.warn{color:var(--warn);border-color:#4d3f1f;background:#231f10}
-  .grid{display:grid;gap:16px}
-  @media(min-width:840px){ .cols{grid-template-columns:1fr 1fr} }
-  .card{
-    background:linear-gradient(180deg,var(--panel) 0%,var(--panel-2) 100%);
-    border:1px solid var(--line); border-radius:var(--radius); padding:20px;
-  }
-  .card h2{font-size:14px;margin:0 0 14px;color:var(--muted);font-weight:600;letter-spacing:.8px;text-transform:uppercase}
-  label{display:block;font-size:13px;color:var(--muted);margin:12px 0 6px}
-  input[type=text],input[type=number],input[type=time]{
-    width:100%;padding:11px 13px;border-radius:10px;border:1px solid var(--line);
-    background:#0e1116;color:var(--text);font-size:15px;outline:none;transition:.15s;
-  }
-  input:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(255,122,69,.14)}
-  button{
-    cursor:pointer;border:none;border-radius:10px;padding:11px 18px;font-size:14px;font-weight:600;
-    background:linear-gradient(135deg,var(--accent),var(--accent-2));color:#191207;transition:.15s;
-  }
-  button:hover{filter:brightness(1.08)}
-  button:disabled{opacity:.45;cursor:not-allowed}
-  button.ghost{background:transparent;border:1px solid var(--line);color:var(--text);font-weight:500}
-  button.ghost:hover{background:#20242e}
-  .row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
-  .muted{color:var(--muted);font-size:13px}
-  .kv{display:flex;justify-content:space-between;padding:7px 0;border-bottom:1px dashed #232833;font-size:14px}
-  .kv:last-child{border-bottom:none}
-  .kv span:first-child{color:var(--muted)}
-  .pill{display:inline-block;font-size:12px;padding:2px 9px;border-radius:999px;margin-left:6px}
-  .pill.ok{background:#10231b;color:var(--ok)}
-  .pill.warn{background:#2a2413;color:var(--warn)}
-  .pill.err{background:#2a1717;color:var(--err)}
-  .rec{
-    border:1px solid var(--line);border-radius:12px;padding:14px;margin-bottom:10px;
-    display:flex;justify-content:space-between;gap:12px;align-items:flex-start;
-    background:#12151b;transition:.15s;
-  }
-  .rec:hover{border-color:#3a4256;transform:translateY(-1px)}
-  .rec .name{font-weight:600;margin-bottom:4px}
-  .rec .why{font-size:12px;color:var(--muted)}
-  .rec .price{color:var(--accent-2);font-weight:700;white-space:nowrap}
-  .score{font-size:11px;color:var(--accent);border:1px solid #4a2f22;background:#26170f;
-    padding:2px 8px;border-radius:999px;white-space:nowrap}
-  #logs{max-height:280px;overflow:auto;font-size:12.5px;font-family:ui-monospace,Menlo,monospace}
-  .logline{padding:5px 0;border-bottom:1px dashed #1e232c;color:#a9b1c3}
-  .logline .t{color:#5d6578;margin-right:8px}
-  .toast{
-    position:fixed;bottom:24px;left:50%;transform:translateX(-50%) translateY(20px);
-    background:#20242e;border:1px solid var(--line);padding:13px 20px;border-radius:12px;
-    opacity:0;transition:.25s;pointer-events:none;max-width:90vw;z-index:99;
-  }
-  .toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
-  .toast.err{border-color:#5a2323;color:#ffb3b3}
-  .toast.ok{border-color:#1f4d3a;color:#a8f0c8}
-  .switch{display:flex;align-items:center;gap:10px}
-  .switch input{width:auto}
-</style>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>办公自动化平台</title>
+{% include '_style.html' %}
 </head>
 <body>
 <div class="wrap">
   <header>
-    <h1>🍱 美餐自动订餐</h1>
-    <span class="badge" id="userBadge">未登录</span>
-    <span class="badge" id="schedBadge">自动订餐关闭</span>
-    <span class="badge" id="aliveBadge">保活未启动</span>
-    <button class="ghost" id="btnLogout" style="margin-left:auto;display:none">退出登录</button>
+    <h1>办公自动化平台</h1>
+    <span class="badge" id="who"></span>
+    <div style="flex:1"></div>
+    <button class="ghost" id="btnLogout">退出登录</button>
   </header>
-
-  <div class="grid cols">
-    <!-- 登录 -->
-    <div class="card">
-      <h2>1 · 登录</h2>
-      <label>手机号</label>
-      <input type="text" id="phone" placeholder="11 位手机号" value="">
-      <div class="row" style="margin-top:12px">
-        <button id="btnSend">发送验证码</button>
-        <span class="muted" id="sendHint"></span>
-      </div>
-      <label>短信验证码</label>
-      <input type="text" id="code" placeholder="短信验证码（4 位）">
-      <div class="row" style="margin-top:12px">
-        <button id="btnVerify">登录</button>
-      </div>
-      <p class="muted" style="margin-top:12px">
-        验证码每天有发送次数限制；接口返回成功但收不到短信，通常是被静默限流。
-      </p>
-    </div>
-
-    <!-- 今日/明日状态 -->
-    <div class="card">
-      <h2>2 · 订餐状态</h2>
-      <div id="statusBox" class="muted">点击下方按钮查询</div>
-      <div class="row" style="margin-top:14px">
-        <button class="ghost" id="btnCheckToday">查今天</button>
-        <button class="ghost" id="btnCheckTomorrow">查明天</button>
-      </div>
-    </div>
-  </div>
-
-  <!-- 推荐 -->
-  <div class="card" style="margin-top:16px">
-    <h2>3 · 智能推荐 <span class="muted" style="text-transform:none;letter-spacing:0">（基于历史订单推测口味）</span></h2>
-    <div class="row" style="margin-bottom:14px">
-      <button class="ghost" id="btnRecTomorrow">推荐明天</button>
-      <span class="muted" id="recMeta"></span>
-    </div>
-    <div id="recBox" class="muted">还没有推荐，点上面的按钮试试</div>
-  </div>
-
-  <!-- 配置 -->
-  <div class="grid cols" style="margin-top:16px">
-    <div class="card">
-      <h2>4 · 自动化设置</h2>
-      <div class="switch" style="margin-bottom:6px">
-        <input type="checkbox" id="enabled">
-        <label for="enabled" style="margin:0">启用每日自动检测与下单</label>
-      </div>
-      <label>每天几点执行</label>
-      <input type="time" id="scheduleTime" value="15:30">
-      <label>给哪一天订</label>
-      <select id="orderTarget" style="width:100%;padding:11px 13px;border-radius:10px;border:1px solid var(--line);background:#0e1116;color:var(--text);font-size:15px">
-        <option value="next_day">第二天</option>
-        <option value="today">当天</option>
-      </select>
-      <label>单价上限（元）</label>
-      <input type="number" id="maxPrice" value="25" step="0.5">
-      <div class="switch" style="margin-top:14px">
-        <input type="checkbox" id="dryRun" checked>
-        <label for="dryRun" style="margin:0">演练模式（只推荐、不真正下单）</label>
-      </div>
-      <div class="row" style="margin-top:16px">
-        <button id="btnSaveCfg">保存设置</button>
-        <button class="ghost" id="btnRunNow">立即执行一次</button>
-      </div>
-    </div>
-
-    <div class="card">
-      <h2>5 · 运行日志</h2>
-      <div id="logs" class="muted">暂无日志</div>
-    </div>
-  </div>
+  <div id="features" class="grid cols"></div>
+  <p class="muted" id="empty" style="display:none">暂无可用功能。</p>
 </div>
-
 <div class="toast" id="toast"></div>
-
 <script>
 const $ = s => document.querySelector(s);
 let toastTimer;
-
-function toast(msg, kind='') {
-  const t = $('#toast');
-  t.textContent = msg;
-  t.className = 'toast show ' + kind;
-  clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => t.className = 'toast', 3600);
+function toast(m,k=''){const t=$('#toast');t.textContent=m;t.className='toast show '+k;
+  clearTimeout(toastTimer);toastTimer=setTimeout(()=>t.className='toast',3200);}
+async function api(p,o={}){
+  const r=await fetch(p,{headers:{'content-type':'application/json'},...o});
+  const d=await r.json().catch(()=>({}));
+  if(r.status===401){location.href='/login';throw new Error('未登录');}
+  if(!r.ok) throw new Error(d.detail||('HTTP '+r.status));
+  return d;
 }
-
-async function api(path, opts={}) {
-  const r = await fetch(path, {
-    headers: {'content-type':'application/json'},
-    ...opts,
-  });
-  const data = await r.json().catch(() => ({}));
-  if (!r.ok) throw new Error(data.detail || data.message || ('HTTP ' + r.status));
-  return data;
+const STATE_LABEL={not_configured:['未配置',''],active:['已登录','on'],
+  expired:['登录失效','err'],error:['异常','err']};
+async function boot(){
+  try{
+    const me = await api('/api/me');
+    $('#who').textContent = me.display_name || me.username;
+    const {features} = await api('/api/features');
+    if(!features.length){ $('#empty').style.display='block'; return; }
+    $('#features').innerHTML = features.map(f=>{
+      const [label,cls] = STATE_LABEL[f.state] || [f.state,''];
+      const next = (f.jobs||[]).map(j=>j.next_run).filter(Boolean)[0];
+      return `<a class="cardlink card" href="/feature/${f.key}">
+        <div class="fname">${f.name} <span class="badge ${cls}">${label}</span></div>
+        <div class="fdesc">${f.description||''}</div>
+        <div class="kv"><span>状态</span><span>${f.enabled?'已开启定时':'定时关闭'}</span></div>
+        <div class="kv"><span>下次执行</span><span>${next||'—'}</span></div>
+      </a>`;
+    }).join('');
+  }catch(e){ toast(e.message,'err'); }
 }
-
-// ---- 登录 ----
-$('#btnSend').onclick = async () => {
-  const phone = $('#phone').value.trim();
-  if (!/^1\d{10}$/.test(phone)) return toast('请输入正确的 11 位手机号', 'err');
-  $('#btnSend').disabled = true;
-  try {
-    const d = await api('/api/login/send-code', {method:'POST', body: JSON.stringify({phone})});
-    $('#sendHint').textContent = '已发送，请查看短信';
-    toast('验证码已发送', 'ok');
-    if (d.hint) setTimeout(() => toast(d.hint), 3800);
-  } catch (e) {
-    toast(e.message, 'err');
-    $('#sendHint').textContent = '';
-  } finally {
-    setTimeout(() => $('#btnSend').disabled = false, 3000);
-  }
-};
-
-$('#btnVerify').onclick = async () => {
-  const phone = $('#phone').value.trim();
-  const code = $('#code').value.trim();
-  if (!phone || !code) return toast('手机号和验证码都要填', 'err');
-  $('#btnVerify').disabled = true;
-  try {
-    const d = await api('/api/login/verify', {method:'POST', body: JSON.stringify({phone, code})});
-    toast(`登录成功：${d.user?.name || ''}`, 'ok');
-    $('#code').value = '';
-    refreshStatus();
-  } catch (e) {
-    toast(e.message, 'err');
-  } finally {
-    $('#btnVerify').disabled = false;
-  }
-};
-
-// ---- 状态 ----
-function fmtTime(hhmm) { return hhmm || '—'; }
-
-async function refreshStatus() {
-  try {
-    const s = await api('/api/status');
-    const b = $('#userBadge');
-    b.textContent = `${s.user.name || '已登录'} · ${s.user.phone_masked}`;
-    b.className = 'badge on';
-    $('#btnLogout').style.display = 'inline-block';
-    const sb = $('#schedBadge');
-    sb.textContent = s.config.enabled ? `自动订餐 ${s.config.schedule_time}` : '自动订餐关闭';
-    sb.className = 'badge' + (s.config.enabled ? ' on' : '');
-
-    // 保活状态：idle 超过 60 分钟说明可能掉了
-    const ab = $('#aliveBadge');
-    if (!s.logged_in) {
-      ab.textContent = '保活未启动';
-      ab.className = 'badge';
-    } else if (s.token_idle_minutes < 25) {
-      ab.textContent = `保活正常 · ${s.last_ping || '—'}`;
-      ab.className = 'badge on';
-    } else if (s.token_idle_minutes < 60) {
-      ab.textContent = `保活延迟 ${Math.round(s.token_idle_minutes)} 分钟`;
-      ab.className = 'badge';
-    } else {
-      ab.textContent = `可能已掉线 ${Math.round(s.token_idle_minutes)} 分钟`;
-      ab.className = 'badge warn';
-    }
-
-    $('#enabled').checked = s.config.enabled;
-    $('#scheduleTime').value = s.config.schedule_time;
-    $('#orderTarget').value = s.config.order_target;
-    $('#maxPrice').value = s.config.max_price;
-    $('#dryRun').checked = s.config.dry_run;
-    if (s.config.phone) $('#phone').value = s.config.phone;
-  } catch (e) { /* 忽略 */ }
-}
-
-function renderCheck(d) {
-  if (!d.has_item) return '<div class="muted">该日期没有可订餐次</div>';
-  const st = d.ordered
-    ? '<span class="pill ok">已订餐</span>'
-    : '<span class="pill warn">未订餐</span>';
-  let html = `<div class="kv"><span>日期</span><span>${d.date} ${st}</span></div>
-              <div class="kv"><span>餐次</span><span>${d.title || '—'}</span></div>`;
-  if (d.opening_time) {
-    html += `<div class="kv"><span>可订窗口</span><span>${d.opening_time.openTime} – ${d.opening_time.closeTime}</span></div>`;
-  }
-  if (d.order_detail) {
-    html += `<div class="kv"><span>菜品</span><span>${d.order_detail.dishes.map(x=>x.name).join('、')}</span></div>`;
-    html += `<div class="kv"><span>状态</span><span>${d.order_detail.corp_order_status || '—'}</span></div>`;
-    if (d.order_detail.postbox) {
-      html += `<div class="kv"><span>取餐柜</span><span>${d.order_detail.postbox.postboxCode || '—'}</span></div>`;
-    }
-  } else if (d.reason) {
-    html += `<div class="kv"><span>提示</span><span>${d.reason}</span></div>`;
-  }
-  return html;
-}
-
-// 本地日期 YYYY-MM-DD（不能用 toISOString，那是 UTC，早上 8 点前会算错天）
-function localDate(offsetDays = 0) {
-  const d = new Date();
-  d.setDate(d.getDate() + offsetDays);
-  const p = n => String(n).padStart(2, '0');
-  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
-}
-
-async function doCheck(which) {
-  const box = $('#statusBox');
-  box.textContent = '查询中…';
-  const day = which === 'today' ? localDate(0) : localDate(1);
-  try {
-    const d = await api('/api/check?day=' + day);
-    box.innerHTML = renderCheck(d);
-  } catch (e) {
-    box.innerHTML = `<span style="color:var(--err)">${e.message}</span>`;
-  }
-}
-
-$('#btnCheckToday').onclick = () => doCheck('today');
-$('#btnCheckTomorrow').onclick = () => doCheck('tomorrow');
-
-// ---- 推荐 ----
-$('#btnRecTomorrow').onclick = async () => {
-  const box = $('#recBox');
-  box.textContent = '分析中…';
-  $('#recMeta').textContent = '';
-  const day = localDate(1);
-  try {
-    const d = await api('/api/recommend?day=' + day + '&limit=5');
-    if (d.error) { box.innerHTML = `<span style="color:var(--err)">${d.error}</span>`; return; }
-    $('#recMeta').textContent =
-      `${d.date} · ${d.title || ''} · 候选 ${d.candidates_total} 个 · 历史样本 ${d.model.sample_days} 天`;
-    if (d.ordered) {
-      box.innerHTML = '<div class="muted">这一天已经订过了</div>';
-      return;
-    }
-    box.innerHTML = d.recommendations.map((r, i) => `
-      <div class="rec">
-        <div>
-          <div class="name">${i+1}. ${r.dish}</div>
-          <div class="why">${r.restaurant} · ${r.reasons.join('；')}</div>
-        </div>
-        <div style="text-align:right">
-          <div class="price">¥${r.price}</div>
-          <div class="score" style="margin-top:6px">匹配 ${r.score}</div>
-          <div style="margin-top:8px">
-            <button class="ghost" onclick="orderDish('${r.dish_id}','${day}')">订这个</button>
-          </div>
-        </div>
-      </div>`).join('');
-  } catch (e) {
-    box.innerHTML = `<span style="color:var(--err)">${e.message}</span>`;
-  }
-};
-
-window.orderDish = async (dishId, day) => {
-  try {
-    const d = await api('/api/order', {method:'POST', body: JSON.stringify({dish_id: dishId, day})});
-    if (d.dry_run) {
-      toast('演练模式：未真正下单（可在设置里关闭演练）', 'ok');
-    } else if (d.ok) {
-      toast('下单成功！', 'ok');
-    } else if (d.skipped) {
-      toast(d.message, 'ok');
-    } else {
-      toast(d.error || '下单失败', 'err');
-    }
-    loadLogs();
-    doCheck('tomorrow');
-  } catch (e) { toast(e.message, 'err'); }
-};
-
-// ---- 配置 ----
-$('#btnSaveCfg').onclick = async () => {
-  try {
-    await api('/api/config', {method:'POST', body: JSON.stringify({
-      enabled: $('#enabled').checked,
-      schedule_time: $('#scheduleTime').value || '15:30',
-      order_target: $('#orderTarget').value,
-      max_price: parseFloat($('#maxPrice').value) || 25,
-      dry_run: $('#dryRun').checked,
-    })});
-    toast('设置已保存', 'ok');
-    refreshStatus();
-  } catch (e) { toast(e.message, 'err'); }
-};
-
-$('#btnRunNow').onclick = async () => {
-  try {
-    const d = await api('/api/run-now', {method:'POST'});
-    toast(d.skipped ? ('跳过：' + (d.reason||'')) : (d.ok ? '执行完成' : (d.error||'执行完成')), d.ok ? 'ok' : 'err');
-    loadLogs();
-  } catch (e) { toast(e.message, 'err'); }
-};
-
-// ---- 日志 ----
-async function loadLogs() {
-  try {
-    const d = await api('/api/logs?limit=60');
-    const box = $('#logs');
-    if (!d.logs.length) { box.textContent = '暂无日志'; return; }
-    box.innerHTML = d.logs.map(l =>
-      `<div class="logline"><span class="t">${l.time.slice(5,16)}</span>${l.message}</div>`).join('');
-  } catch (e) { /* 忽略 */ }
-}
-
-// ---- 退出 ----
 $('#btnLogout').onclick = async () => {
-  try {
-    await api('/api/logout', {method:'POST'});
-    location.reload();
-  } catch (e) { toast(e.message, 'err'); }
+  try { await api('/api/logout',{method:'POST'}); location.href='/login'; }
+  catch(e){ location.href='/login'; }
 };
-
-async function boot() {
-  try {
-    await refreshStatus();
-    loadLogs();
-    setInterval(loadLogs, 20000);
-    setInterval(refreshStatus, 30000);
-  } catch (e) {
-    // 401 → 显示登录卡片
-    $('#userBadge').textContent = '未登录';
-    $('#userBadge').className = 'badge';
-    $('#aliveBadge').textContent = '保活未启动';
-    $('#aliveBadge').className = 'badge';
-  }
-}
 boot();
 </script>
 </body>

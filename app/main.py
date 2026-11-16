@@ -50,18 +50,17 @@ def startup() -> None:
 
 @app.get("/", response_class=HTMLResponse)
 def index(request: Request) -> HTMLResponse:
-    return templates.TemplateResponse("index.html", {"request": request})
+    return templates.TemplateResponse(request, "index.html")
 
 
 @app.get("/login", response_class=HTMLResponse)
 def login_page(request: Request) -> HTMLResponse:
-    return templates.TemplateResponse("login.html", {"request": request})
+    return templates.TemplateResponse(request, "login.html")
 
 
 @app.get("/feature/{key}", response_class=HTMLResponse)
 def feature_page(request: Request, key: str) -> HTMLResponse:
-    return templates.TemplateResponse("feature.html",
-                                      {"request": request, "feature_key": key})
+    return templates.TemplateResponse(request, "feature.html", {"feature_key": key})
 
 
 # ---------------- 账号 ----------------
@@ -139,6 +138,9 @@ def features(user: db.User = Depends(web_auth.current_user)):
             "enabled": cfg.enabled,
             "dry_run": cfg.dry_run if saved else f.dry_run_default,
             "display": cred.payload.get("userName") or cred.payload.get("username") or "",
+            "jobs": [{"job_id": j.job_id, "name": j.name,
+                      "next_run": scheduler.next_run(user.id, f.key, j.job_id)}
+                     for j in f.default_jobs],
         })
     return {"features": out}
 

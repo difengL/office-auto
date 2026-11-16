@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>功能面板</title>
+{% include '_style.html' %}
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <a href="/" class="ghost" style="text-decoration:none;padding:8px 14px;border:1px solid var(--line);border-radius:10px;color:var(--text)">← 返回</a>
+    <h1 id="fname">加载中…</h1>
+    <span class="badge" id="stateBadge"></span>
+  </header>
+
+  <div class="grid cols">
+    <div class="card">
+      <h2>登录凭据</h2>
+      <div class="muted" id="credHint" style="margin-bottom:12px"></div>
+      <div id="fields"></div>
+      <div class="row" style="margin-top:16px">
+        <button id="btnLogin">保存并登录</button>
+      </div>
+      <div class="kv" style="margin-top:16px"><span>当前身份</span><span id="credDisplay">—</span></div>
+    </div>
+
+    <div class="card">
+      <h2>自动化设置</h2>
+      <div class="switch" style="margin-bottom:10px">
+        <input type="checkbox" id="enabled"><label for="enabled" style="margin:0">启用定时任务</label>
+      </div>
+      <div class="switch">
+        <input type="checkbox" id="dryRun"><label for="dryRun" style="margin:0">演练模式（不真正提交）</label>
+      </div>
+      <div id="jobTimes" style="margin-top:14px"></div>
+      <div id="options" style="margin-top:14px"></div>
+      <div class="row" style="margin-top:16px">
+        <button id="btnSave">保存设置</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>立即执行</h2>
+    <div class="row" id="runButtons"></div>
+  </div>
+
+  <div class="card">
+    <h2>运行记录</h2>
+    <div id="runs" class="muted">暂无记录</div>
+  </div>
+</div>
+<div class="toast" id="toast"></div>
+<script>
+const $ = s => document.querySelector(s);
+let toastTimer;
+function toast(m,k=''){const t=$('#toast');t.textContent=m;t.className='toast show '+k;
+  clearTimeout(toastTimer);toastTimer=setTimeout(()=>t.className='toast',3200);}
+const KEY = location.pathname.split('/').pop();
+async function api(p,o={}){
+  const r=await fetch(p,{headers:{'content-type':'application/json'},...o});
+  const d=await r.json().catch(()=>({}));
+  if(r.status===401){location.href='/login';throw new Error('未登录');}
+  if(!r.ok) throw new Error(d.detail||('HTTP '+r.status));
+  return d;
+}
+const STATE_LABEL={not_configured:['未配置',''],active:['已登录','on'],
+  expired:['登录失效','err'],error:['异常','err']};
+
+let detail = null;
+
+function renderFields() {
+  $('#fields').innerHTML = detail.credential_fields.map(f=>`
+    <label>${f.label}</label>
+    <input data-field="${f.name}" type="${f.type==='password'?'password':'text'}">`).join('');
+}
+
+function renderJobs() {
+  $('#jobTimes').innerHTML = detail.jobs.filter(j=>j.editable).map(j=>{
+    const cur = (detail.config.schedule||{})[j.job_id] || j.default || {};
+    const txt = j.trigger==='cron'
+      ? `${String(cur.hour??9).padStart(2,'0')}:${String(cur.minute??0).padStart(2,'0')}`
+      : `每 ${cur.minutes??cur.hours??30} 分钟`;
+    return `<label>${j.name}（${j.trigger==='cron'?'时刻 HH:MM':'间隔'}）</label>
+            <input data-sched="${j.job_id}" value="${txt}">
+            <div class="muted" style="font-size:12px;margin-top:4px">
+              下次：${j.next_run||'未启用'}${j.failures>=3?` · <span class="err">连续失败 ${j.failures} 次</span>`:''}
+            </div>`;
+  }).join('');
+  $('#runButtons').innerHTML = detail.jobs.map(j=>
+    `<button class="ghost" data-run="${j.job_id}">立即执行：${j.name}</button>`).join('');
+  document.querySelectorAll('[data-run]').forEach(b=>{
+    b.onclick = async () => {
+      b.disabled = true;
+      try {
+        const r = await api(`/api/features/${KEY}/run`,
+          {method:'POST', body: JSON.stringify({job_id: b.dataset.run})});
+        toast(r.message || (r.ok?'完成':'失败'), r.ok?'ok':'err');
+        await loadRuns();
+      } catch(e){ toast(e.message,'err'); }
+      finally { b.disabled = false; }
+    };
+  });
+}
+
+function renderOptions() {
+  $('#options').innerHTML = (detail.extra_options||[]).map(o=>{
+    const raw = (detail.option_values||{})[o.name] || [];
+    // 后端给的是 [{project_id, name}]，统一成 {value,label}
+    const items = raw.map(x=>({value: x.value ?? x.project_id, label: x.label ?? x.name}));
+    const cur = (detail.config.options||{})[o.name] || '';
+    if (o.type === 'select') {
+      return `<label>${o.label}</label>
+        <div class="row"><select data-opt="${o.name}" style="flex:1">
+          ${items.map(i=>`<option value="${i.value}" ${i.value==cur?'selected':''}>${i.label}</option>`).join('')}
+        </select>${o.refreshable?`<button class="ghost" data-refresh="${o.name}">刷新</button>`:''}</div>`;
+    }
+    return `<label>${o.label}</label><input data-opt="${o.name}" value="${cur}">`;
+  }).join('');
+  document.querySelectorAll('[data-refresh]').forEach(b=>{
+    b.onclick = async () => {
+      b.disabled = true;
+      try { await api(`/api/features/${KEY}/options/refresh`,{method:'POST'});
+            toast('已刷新','ok'); await load(); }
+      catch(e){ toast(e.message,'err'); }
+      finally { b.disabled = false; }
+    };
+  });
+}
+
+async function loadRuns() {
+  const {runs} = await api(`/api/features/${KEY}/runs?limit=20`);
+  $('#runs').innerHTML = runs.length ? runs.map(r=>
+    `<div class="logline"><span class="t">${r.time}</span>
+     <span class="${r.ok?'ok':'err'}">${r.ok?'成功':'失败'}</span>
+     <span class="muted">[${r.job_id}]</span> ${r.message||''}</div>`).join('')
+    : '<span class="muted">暂无记录</span>';
+}
+
+async function load() {
+  detail = await api(`/api/features/${KEY}`);
+  document.title = detail.name;
+  $('#fname').textContent = detail.name;
+  const [label,cls] = STATE_LABEL[detail.state]||[detail.state,''];
+  $('#stateBadge').textContent = label;
+  $('#stateBadge').className = 'badge ' + cls;
+  $('#credHint').textContent = detail.credential_kind === 'interactive'
+    ? '需要短信验证码 / 扫码，登录态失效后须重新登录'
+    : '账号密码型，登录态失效会自动重登';
+  $('#credDisplay').textContent = detail.display || '—';
+  $('#enabled').checked = !!detail.config.enabled;
+  $('#dryRun').checked = !!detail.config.dry_run;
+  renderFields(); renderJobs(); renderOptions(); await loadRuns();
+}
+
+$('#btnLogin').onclick = async () => {
+  const payload = {};
+  document.querySelectorAll('[data-field]').forEach(i=>{ payload[i.dataset.field]=i.value.trim(); });
+  $('#btnLogin').disabled = true;
+  try {
+    const d = await api(`/api/features/${KEY}/login`,{method:'POST',body:JSON.stringify(payload)});
+    toast('登录成功：' + (d.display||''),'ok');
+    await load();
+  } catch(e){ toast(e.message,'err'); }
+  finally { $('#btnLogin').disabled = false; }
+};
+
+function parseTimeInput(text, prev) {
+  // 支持 "HH:MM" 或 "每 N 分钟"
+  const m = text.match(/每\s*(\d+)\s*分钟/);
+  if (m) return { minutes: parseInt(m[1], 10) };
+  const t = text.match(/(\d{1,2})\s*:\s*(\d{1,2})/);
+  if (t) return { hour: parseInt(t[1], 10), minute: parseInt(t[2], 10) };
+  return prev;
+}
+
+$('#btnSave').onclick = async () => {
+  const schedule = { ...(detail.config.schedule || {}) };
+  document.querySelectorAll('[data-sched]').forEach(i => {
+    schedule[i.dataset.sched] = parseTimeInput(i.value, schedule[i.dataset.sched] || {});
+  });
+  const options = { ...(detail.config.options || {}) };
+  document.querySelectorAll('[data-opt]').forEach(i => { options[i.dataset.opt] = i.value; });
+  try {
+    await api(`/api/features/${KEY}/config`, {method:'POST', body: JSON.stringify({
+      enabled: $('#enabled').checked, dry_run: $('#dryRun').checked, schedule, options
+    })});
+    toast('设置已保存','ok');
+    await load();
+  } catch(e){ toast(e.message,'err'); }
+};
+
+load().catch(e => toast(e.message,'err'));
+</script>
+</body>
+</html>

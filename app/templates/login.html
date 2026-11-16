@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>登录 · 办公自动化平台</title>
+{% include '_style.html' %}
+</head>
+<body>
+<div class="wrap" style="max-width:420px;margin-top:8vh">
+  <header><h1>办公自动化平台</h1></header>
+  <div class="card">
+    <h2 id="formTitle">登录</h2>
+    <label>用户名</label>
+    <input id="username" autocomplete="username">
+    <label>密码</label>
+    <input id="password" type="password" autocomplete="current-password">
+    <div class="row" style="margin-top:18px">
+      <button id="btnSubmit">登录</button>
+      <button class="ghost" id="btnToggle">没有账号？注册</button>
+    </div>
+    <p class="muted" style="font-size:12px;margin-top:14px">
+      这是平台账号，与美餐 / HEM 的账号分开管理。
+    </p>
+  </div>
+</div>
+<div class="toast" id="toast"></div>
+<script>
+const $ = s => document.querySelector(s);
+let mode = 'login';
+let toastTimer;
+function toast(msg, kind='') {
+  const t = $('#toast'); t.textContent = msg; t.className = 'toast show ' + kind;
+  clearTimeout(toastTimer); toastTimer = setTimeout(()=>t.className='toast', 3000);
+}
+$('#btnToggle').onclick = () => {
+  mode = mode === 'login' ? 'register' : 'login';
+  $('#formTitle').textContent = mode === 'login' ? '登录' : '注册新账号';
+  $('#btnSubmit').textContent = mode === 'login' ? '登录' : '注册并登录';
+  $('#btnToggle').textContent = mode === 'login' ? '没有账号？注册' : '已有账号？登录';
+};
+async function submit() {
+  const body = {username: $('#username').value.trim(), password: $('#password').value};
+  if (!body.username || !body.password) return toast('请填写用户名和密码', 'err');
+  $('#btnSubmit').disabled = true;
+  try {
+    const r = await fetch('/api/' + mode, {
+      method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify(body)});
+    const d = await r.json().catch(()=>({}));
+    if (!r.ok) throw new Error(d.detail || '请求失败');
+    location.href = '/';
+  } catch(e) { toast(e.message, 'err'); }
+  finally { $('#btnSubmit').disabled = false; }
+}
+$('#btnSubmit').onclick = submit;
+$('#password').addEventListener('keydown', e => { if (e.key === 'Enter') submit(); });
+</script>
+</body>
+</html>
