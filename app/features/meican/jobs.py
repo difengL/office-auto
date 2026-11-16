@@ -1,0 +1,211 @@
+"""美餐订餐业务逻辑：历史学习 → 候选打分 → 下单。
+
+全部是纯函数式接口（凭据 payload + cache 显式传入），不碰全局状态，
+因此可以同时服务多个用户。
+"""
+from __future__ import annotations
+
+import json
+import time
+from datetime import date, datetime, timedelta
+
+from app.core.feature import JobResult
+
+from .client import MeicanClient, MeicanError
+from .preference import DishCandidate, PreferenceModel, rank_candidates, summarize
+
+STATUS_ORDERED = "ORDER"
+
+
+def _client(payload: dict) -> MeicanClient:
+    return MeicanClient(payload.get("accessToken"))
+
+
+def keepalive(payload: dict) -> bool:
+    """探测登录态是否有效。"""
+    try:
+        _client(payload).account()
+        return True
+    except MeicanError:
+        return False
+
+
+def fetch_history(payload: dict, cache: dict, days: int = 90,
+                  max_pages: int = 8) -> list[dict]:
+    """拉取历史订单，带 12 小时缓存。cache 由调用方按用户持久化。"""
+    cached = cache.get("history")
+    if cached and time.time() - cached.get("ts", 0) < 12 * 3600:
+        return cached["records"]
+
+    client = _client(payload)
+    end = date.today()
+    start = end - timedelta(days=days)
+    records: list[dict] = []
+    names = cache.get("restaurant_names") or {}
+    cursor = start
+    pages = 0
+    while cursor <= end and pages < max_pages:
+        chunk_end = min(cursor + timedelta(days=13), end)
+        try:
+            day_items = client.calendar_items(cursor, chunk_end, with_order=True)
+        except MeicanError:
+            break
+        pages += 1
+        for day in day_items:
+            d = day.get("targetTime") or cursor.isoformat()
+            for item in day.get("calendarItemList") or []:
+                order = item.get("corpOrderUser")
+                if not order:
+                    continue
+                for ri in order.get("restaurantItemList") or []:
+                    rid = (ri.get("restaurant") or {}).get("uniqueId", "")
+                    rname = names.get(rid) or (ri.get("restaurant") or {}).get("name") or rid
+                    for di in ri.get("dishItemList") or []:
+                        dish = di.get("dish") or {}
+                        records.append({
+                            "date": d[:10],
+                            "restaurant": rname,
+                            "dish": dish.get("name", ""),
+                            "price": dish.get("priceInCent", 0) / 100,
+                        })
+        cursor = chunk_end + timedelta(days=1)
+    cache["history"] = {"ts": time.time(), "records": records}
+    return records
+
+
+def _target_time_str(item: dict) -> str:
+    ts = item.get("targetTime")
+    if isinstance(ts, (int, float)):
+        return datetime.fromtimestamp(ts / 1000).strftime("%Y-%m-%d %H:%M")
+    opening = item.get("openingTime") or {}
+    return f"{date.today().isoformat()} {opening.get('closeTime', '18:00')}"
+
+
+def find_meal_item(items: list[dict]) -> dict | None:
+    if not items:
+        return None
+    for it in items:
+        if "晚餐" in (it.get("title") or ""):
+            return it
+    return items[0]
+
+
+def build_candidates(client: MeicanClient, item: dict, max_price: float) -> list[DishCandidate]:
+    tab = (item.get("userTab") or {}).get("uniqueId")
+    tt = _target_time_str(item)
+    out: list[DishCandidate] = []
+    for r in client.restaurants(tab, tt):
+        try:
+            menu = client.restaurant_menu(r["uniqueId"], tab, tt)
+        except MeicanError:
+            continue
+        for dish in menu.get("dishList") or []:
+            if dish.get("isSection"):
+                continue
+            price = dish.get("priceInCent", 0) / 100
+            if max_price and price > max_price:
+                continue
+            out.append(DishCandidate(r.get("name", ""), r.get("uniqueId", ""),
+                                     dish.get("id"), dish.get("name", ""), price))
+    return out
+
+
+def check_status(payload: dict, target_day: date) -> dict:
+    client = _client(payload)
+    days = client.calendar_items(target_day, target_day, with_order=True)
+    if not days or not days[0].get("calendarItemList"):
+        return {"date": target_day.isoformat(), "has_item": False, "ordered": False}
+    item = find_meal_item(days[0]["calendarItemList"])
+    if not item:
+        return {"date": target_day.isoformat(), "has_item": False, "ordered": False}
+    return {
+        "date": target_day.isoformat(), "has_item": True,
+        "ordered": bool(item.get("corpOrderUser")) or item.get("status") == STATUS_ORDERED,
+        "status": item.get("status"), "reason": item.get("reason", ""),
+        "title": item.get("title"),
+        "opening_time": item.get("openingTime"),
+        "order_detail": _extract_order(item),
+        "raw_item": item,
+    }
+
+
+def _extract_order(item: dict) -> dict | None:
+    order = item.get("corpOrderUser")
+    if not order:
+        return None
+    dishes = []
+    for ri in order.get("restaurantItemList") or []:
+        for di in ri.get("dishItemList") or []:
+            d = di.get("dish") or {}
+            dishes.append({"name": d.get("name"),
+                           "price": d.get("priceInCent", 0) / 100,
+                           "count": di.get("count")})
+    return {"dishes": dishes, "pay_status": order.get("payStatus"),
+            "corp_order_status": order.get("corpOrderStatus"),
+            "postbox": order.get("postbox"), "address": order.get("corpAddress")}
+
+
+def recommend(payload: dict, cache: dict, target_day: date, limit: int = 5,
+              max_price: float = 25.0) -> dict:
+    client = _client(payload)
+    days = client.calendar_items(target_day, target_day, with_order=True)
+    if not days or not days[0].get("calendarItemList"):
+        return {"date": target_day.isoformat(), "error": "该日期没有可订餐次"}
+    item = find_meal_item(days[0]["calendarItemList"])
+    if not item:
+        return {"date": target_day.isoformat(), "error": "未找到餐次"}
+    model = PreferenceModel.from_history(fetch_history(payload, cache))
+    cands = build_candidates(client, item, max_price)
+    top = rank_candidates(cands, target_day, model, limit=limit)
+    return {
+        "date": target_day.isoformat(),
+        "title": item.get("title"),
+        "status": item.get("status"),
+        "already_ordered": bool(item.get("corpOrderUser")),
+        "history_summary": summarize(model),
+        "candidates": [{
+            "restaurant_name": c.restaurant_name, "restaurant_id": c.restaurant_id,
+            "dish_id": c.dish_id, "dish_name": c.dish_name,
+            "price": c.price, "score": c.score, "reasons": c.reasons,
+        } for c in top],
+        "total_candidates": len(cands),
+    }
+
+
+def do_order(payload: dict, cache: dict, target_day: date,
+             dish: dict | None = None, dry_run: bool = False,
+             max_price: float = 25.0) -> JobResult:
+    """下单。dish 为空则自动挑最高分候选。dry_run 只演算不提交。"""
+    status = check_status(payload, target_day)
+    if not status.get("has_item"):
+        return JobResult(False, f"{target_day} 没有可订餐次")
+    if status.get("ordered"):
+        return JobResult(True, f"{target_day} 已订过餐，跳过", {"skipped": True})
+
+    if dish is None:
+        rec = recommend(payload, cache, target_day, limit=1, max_price=max_price)
+        if rec.get("error"):
+            return JobResult(False, rec["error"])
+        if not rec.get("candidates"):
+            return JobResult(False, "没有符合条件的候选菜品")
+        dish = rec["candidates"][0]
+
+    detail = {"date": target_day.isoformat(), "dish": dish, "dry_run": dry_run}
+    if dry_run:
+        return JobResult(True, f"[试运行] 将下单：{dish['restaurant_name']} / {dish['dish_name']}", detail)
+
+    client = _client(payload)
+    item = status["raw_item"]
+    tab = (item.get("userTab") or {}).get("uniqueId")
+    tt = _target_time_str(item)
+    try:
+        res = client.place_order(
+            tab_unique_id=tab, target_time=tt,
+            dishes=[{"dishId": dish["dish_id"], "count": 1}],
+            address_unique_id=(item.get("corpAddress") or {}).get("uniqueId", ""),
+        )
+    except MeicanError as exc:
+        return JobResult(False, f"下单失败：{exc}", detail)
+    detail["response"] = res
+    cache.setdefault("restaurant_names", {})[dish["restaurant_id"]] = dish["restaurant_name"]
+    return JobResult(True, f"下单成功：{dish['restaurant_name']} / {dish['dish_name']}", detail)
