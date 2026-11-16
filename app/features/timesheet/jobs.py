@@ -28,7 +28,7 @@ def plan_week(records: list[dict], days: list[date], default_hours: float) -> di
 
 
 def resolve_project(client: HemClient, wanted: str | None) -> dict:
-    """项目选择：指定 → 含「日常工作」→ 第一个。"""
+    """项目选择：用户已选且仍在列表里 → 用它；否则回退第一个（规格确认的默认规则）。"""
     projects = client.list_projects()
     if not projects:
         raise HemError("账号下没有可用项目")
@@ -36,9 +36,6 @@ def resolve_project(client: HemClient, wanted: str | None) -> dict:
         for p in projects:
             if p["project_id"] == str(wanted):
                 return p
-    for p in projects:
-        if "日常工作" in p["name"]:
-            return p
     return projects[0]
 
 

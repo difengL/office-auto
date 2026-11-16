@@ -44,8 +44,7 @@ class TimesheetFeature(Feature):
                 raise FeatureLoginError(f"HEM 登录失败：{exc}") from exc
         payload.update({"username": username, "password": password})
         db.fdata_set(user_id, self.key, "projects", projects)
-        default = next((p for p in projects if "日常工作" in p["name"]),
-                       projects[0] if projects else None)
+        default = projects[0] if projects else None
         return {"display": info.get("name") or username,
                 "projects": projects,
                 "default_project": default}

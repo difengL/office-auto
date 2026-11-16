@@ -9,7 +9,7 @@ from datetime import date, timedelta
 
 import httpx
 
-BASE = "https://hem.100credit.com"
+BASE = "https://hem.100credit.cn"
 LOGIN_PAGE = "/login"
 LOGIN_API = "/api/login"
 REMEMBER_ME_DAYS = 7
@@ -66,7 +66,8 @@ class HemClient:
         data = payload.get("data") or {}
         self.uid = str(data.get("uid") or data.get("userId") or "")
         self.name = data.get("name") or data.get("realname") or self.username
-        if "JSESSIONID" not in self._client.cookies:
+        # 规格实测：HEM 下发 session_id + token（HttpOnly，有效期 10 天）
+        if not any(k in self._client.cookies for k in ("session_id", "token")):
             raise HemError("登录后未获得会话 cookie")
         return {"uid": self.uid, "username": self.username, "name": self.name}
 
@@ -84,7 +85,7 @@ class HemClient:
         return payload
 
     def list_projects(self) -> list[dict]:
-        payload = self._get("/api/project/list", {"page": 1, "limit": 200})
+        payload = self._get("/api/localproject/list", {"page_size": 10000})
         data = payload.get("data") or {}
         items = data.get("list") if isinstance(data, dict) else data
         out = []
