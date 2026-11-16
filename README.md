@@ -1,112 +1,85 @@
-# 美餐自动订餐（多用户版）
+# 办公自动化平台
 
-基于历史订单推测口味，每天自动检测并订餐。支持多人各自独立使用，数据完全隔离。
+多人使用的办公自动化工具，功能以插件形式接入。
 
 ## 启动
 
 ```bash
-cd ~/meican-auto
-
-# 只给本机用
-./run.sh
-
-# 给内网同事用（0.0.0.0）
-./.venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8765
+./run.sh                      # 仅本机
+./.venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8765   # 内网共享
 ```
 
-浏览器打开 http://127.0.0.1:8765（或 `http://<本机内网IP>:8765`）
+浏览器打开 http://127.0.0.1:8765 ，注册账号后登录。
 
 首次部署先装依赖：
 
 ```bash
 python3 -m venv .venv
-./.venv/bin/pip install fastapi uvicorn httpx apscheduler cryptography
+./.venv/bin/pip install fastapi uvicorn httpx apscheduler cryptography jinja2 pytest
 ```
 
-## 多用户模型
+## 已有功能
 
-**登录即注册。** 没有独立的账号体系——能收到某手机号的短信，就证明你拥有该美餐账号：
+| 功能 | 凭据类型 | 默认定时 | 说明 |
+|---|---|---|---|
+| 美餐自动订餐 | 交互型（短信验证码） | 工作日 10:05 订餐；每 6 小时保活 | 学习历史口味自动挑菜下单 |
+| HEM 工时填报 | 密码型（HEM 账号） | 周五 17:30 提交周报 | 检查本周工时是否填齐，默认演练模式 |
 
-```
-输手机号 → 发码 → 输 4 位码 → 美餐验证通过
-  → 自动建用户记录 + 签发本应用 session cookie（30 天滑动续期）
-  → 之后所有请求只认 cookie，不再碰美餐验证码
-```
+两个功能都默认 **演练模式（dry-run）**，只演算不真正提交。确认结果合理后再关掉。
 
-每个人看到的是自己的订餐状态、推荐、日志、配置。互不可见。
-
-## 使用流程
-
-1. **登录** —— 手机号 + 短信里的 **4 位**验证码
-2. **查状态** —— 「查今天 / 查明天」看是否已订、菜品、取餐柜
-3. **推荐** —— 「推荐明天」给出 top 5 及理由
-4. **自动化** —— 勾选「启用每日自动检测与下单」，设时间（默认 15:30）
-
-> 默认开启「演练模式」，只推荐不真下单。确认推荐合理后再关掉。
-
-## Token 保活（重要）
-
-美餐没有长期凭据。实测规律：
-
-| 凭据 | 行为 |
-|---|---|
-| accessToken | TTL 是「**最后一次使用后** 1 小时」，不是签发后 1 小时 |
-| refreshToken | 声明 1 小时，实测立即无效，无法续期 |
-| ticket | 一次性 |
-
-所以程序每 20 分钟（带随机抖动）请求一次轻量接口续命。手机端能数月不登录，是同样的原理——你持续在用，每次请求都在续期。
-
-**保活断了会怎样**：页面顶部徽章变黄「可能已掉线」，日志记 `token 已失效且无法续期`。此时重新登录即可。
-
-## 偏好算法
-
-`app/preference.py`，纯规则，无 AI 调用，可解释：
-
-- **主信号**：与历史吃过的菜名做字符二元组 Jaccard 相似度，14 天半衰期
-- **次信号**：食材/口味关键词频次，按总词频归一化
-- **惩罚项**：3 天内吃过同款 −12 分，5 天内高度相似 −5 分
-- **餐厅信号**：历史点过的店加分（但每天可选餐厅几乎完全不同，作用有限）
-
-## 目录
+## 架构
 
 ```
-app/
-  main.py         FastAPI 路由 + 按用户调度
-  auth.py         会话认证（cookie → 用户）
-  db.py           SQLite 存储层（凭据加密）
-  service.py      业务编排（检测/历史/推荐/下单）
-  meican.py       美餐 API 客户端（v3 REST + v4 GraphQL 登录）
-  keepalive.py    token 保活与续期
-  preference.py   偏好模型
-  templates/      前端单页
-data/
-  meican.db             SQLite 主库（用户/凭据/配置/日志）
-  secret.key            加密密钥（600 权限，勿外传）
-  backup-YYYYmmdd/      历史 JSON 备份
-  server.log            服务日志
+app/core/        框架：认证、数据库、插件契约、注册表、执行器、调度
+app/features/    插件：每个功能一个目录
+app/templates/   通用页面（按插件声明渲染）
 ```
 
-## 安全须知
+`core/` 不依赖 `features/`。新增功能只需：
 
-- 凭据在库里用 **Fernet 加密**存储，密钥是 `data/secret.key`。**备份数据库时别把密钥一起泄露。**
-  也可以用环境变量 `MC_SECRET_KEY` 提供密钥（优先于文件）。
-- 服务绑 `0.0.0.0` 时，内网任何人都能访问并用自己的手机号登录。如需限制，见下方。
-- 当前是 HTTP，session cookie 明文传输。仅限可信内网使用。上公网必须加 HTTPS。
+1. 在 `app/features/<name>/` 下实现 `Feature` 抽象基类
+2. 在 `app/main.py` 的 `_register_features()` 里注册一行
 
-### 限制可用人群
+前端无需改动——凭据字段、任务、可选项都由插件声明驱动渲染。
 
-在 `app/main.py` 的 `/api/login/verify` 里加白名单：
+## 凭据类型
 
-```python
-ALLOWED = {"17600610776", "138xxxxxxxx"}
-if body.phone not in ALLOWED:
-    raise HTTPException(403, "该手机号未获授权")
+- **PASSWORD**：可用已存凭据自动重登（如工时）
+- **INTERACTIVE**：必须人工介入（如美餐短信验证码）
+
+框架按类型自动决定登录态失效后的策略：密码型先尝试重登，交互型直接置失效等人工重新登录。
+
+## 数据隔离
+
+所有功能数据按 `(user_id, feature_key)` 双维度隔离：凭据、配置、KV、运行记录互不可见。
+主库 `data/platform.db`（SQLite WAL）。
+
+## 安全
+
+- 系统密码：PBKDF2-HMAC-SHA256 加盐哈希（26 万次迭代）
+- 功能凭据：Fernet 加密存库，密钥 `data/secret.key`（600）
+- 会话：HttpOnly cookie `mc_session`，SameSite=lax，30 天，多设备并存
+- 自助注册默认开放，`ALLOW_REGISTER=0` 可关闭
+- 当前为 HTTP，仅限可信内网；上公网须加 HTTPS
+- **备份数据库时别把 `secret.key` 一起泄露**
+
+## 测试
+
+```bash
+./.venv/bin/python -m pytest tests/ -v
 ```
 
-## 已知限制
+测试全部使用临时库与临时密钥，不碰 `data/` 下的真实数据，也不打真实网络。
 
-- 历史订单只存餐厅 id 不存名字，且餐厅列表仅当天可查。餐厅名靠 `restaurant_names` 表逐步积累，
-  新用户首次运行时可能显示「未知餐厅」。
-- 订餐窗口 09:00–16:00。定时任务默认 15:30 卡在窗口内。
-- 发码有静默限流：接口返回 OK 但短信不发，同号当天超过 4 次容易触发。
-- 验证码是 **4 位**，不是 6 位。
+## 事件循环约束
+
+`core/runner.execute` 与 `runner.run_login` 内部用 `asyncio.run`，**只能从同步上下文调用**：
+
+- FastAPI 路由必须用 `def`（不是 `async def`）
+- APScheduler 的任务经 `asyncio.to_thread` 包一层
+
+违反会抛 `RuntimeError: asyncio.run() cannot be called from a running event loop`。
+
+## 业务知识
+
+美餐 token 保活规律、订餐窗口、验证码位数等领域知识见 `docs/business/`。

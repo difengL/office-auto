@@ -5,6 +5,8 @@
 """
 from __future__ import annotations
 
+import base64
+import hashlib
 import json
 import os
 import secrets
@@ -31,9 +33,22 @@ STATE_ERROR = "error"
 
 
 def _load_key() -> bytes:
+    """读取/生成 Fernet 密钥。
+
+    兼容三种历史形态，避免换格式导致已有凭据解不开：
+    1. 合法 Fernet key（44 字节 url-safe base64）—— 直接用
+    2. 旧版遗留的 32 字节原始随机字节 —— 按旧派生方式 base64(sha256(raw))
+    3. 文件不存在 —— 生成新 key 并写盘（600）
+    """
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     if KEY_PATH.exists():
-        return KEY_PATH.read_bytes().strip()
+        raw = KEY_PATH.read_bytes().strip()
+        try:
+            Fernet(raw)                 # 形态 1：校验是否已是合法 key
+            return raw
+        except (ValueError, TypeError):
+            # 形态 2：旧版用 sha256 派生后再 base64，沿用同一派生保持可解密
+            return base64.urlsafe_b64encode(hashlib.sha256(raw).digest())
     key = Fernet.generate_key()
     KEY_PATH.write_bytes(key)
     os.chmod(KEY_PATH, 0o600)

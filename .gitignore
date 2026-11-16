@@ -1,11 +1,5 @@
 .venv/
 __pycache__/
 *.pyc
-data/*.db
-data/*.db-wal
-data/*.db-shm
-data/secret.key
-data/server.log
-data/backup-*/
+data/
 .playwright-mcp/
-data/backup/
