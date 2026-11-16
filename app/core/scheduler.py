@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import random
 
+from apscheduler.schedulers.base import STATE_STOPPED
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
@@ -89,5 +90,12 @@ async def _run_job(user_id: int, feature_key: str, jid: str) -> None:
 
 
 def start() -> None:
+    """启动调度器。若上次绑定的事件循环已关闭（进程内重启 / 测试多次 lifespan），
+    先复位状态再重新绑定当前循环，否则 add_job 会往死循环上投递唤醒。"""
+    loop = getattr(scheduler, "_eventloop", None)
+    if scheduler.running and loop is not None and loop.is_closed():
+        scheduler._stop_timer()
+        scheduler._eventloop = None
+        scheduler.state = STATE_STOPPED
     if not scheduler.running:
         scheduler.start()
