@@ -9,46 +9,64 @@
 <div id="topbar"></div>
 <div class="wrap">
   <header>
-    <a href="/" class="ghost" style="text-decoration:none;padding:8px 14px;border:1px solid var(--line);border-radius:10px;color:var(--text)">← 返回</a>
+    <a href="/" class="back">← 返回</a>
     <h1 id="fname">加载中…</h1>
     <span class="badge" id="stateBadge"></span>
   </header>
 
-  <div class="grid cols">
-    <div class="card">
-      <h2>登录凭据</h2>
-      <div class="muted" id="credHint" style="margin-bottom:12px"></div>
-      <div id="fields"></div>
-      <div class="row" style="margin-top:16px">
-        <button id="btnLogin">保存并登录</button>
-      </div>
-      <div class="kv" style="margin-top:16px"><span>当前身份</span><span id="credDisplay">—</span></div>
+  <!-- ① 未登录 / 切换账号：只显示登录框 -->
+  <section id="loginPanel" class="card login-card" hidden>
+    <div class="login-head">
+      <h2 id="loginTitle">登录</h2>
+      <p class="muted" id="credHint"></p>
     </div>
+    <div id="fields" class="fields"></div>
+    <div class="row" style="margin-top:20px">
+      <button id="btnLogin">保存并登录</button>
+      <button id="btnCancelSwitch" class="ghost" hidden>取消</button>
+    </div>
+  </section>
 
+  <!-- ② 已登录：身份卡 -->
+  <section id="identityPanel" class="card identity" hidden>
+    <div class="avatar" id="avatar">—</div>
+    <div class="who">
+      <div class="who-label">当前登录</div>
+      <div class="who-name" id="credDisplay">—</div>
+      <div class="who-sub">账号 <span id="credAccount">—</span></div>
+    </div>
+    <div style="flex:1"></div>
+    <button id="btnSwitch" class="ghost">切换登录</button>
+  </section>
+
+  <!-- ③ 仅登录后可见 -->
+  <div id="authedArea" hidden>
     <div class="card">
       <h2>自动化设置</h2>
-      <div class="switch" style="margin-bottom:10px">
-        <input type="checkbox" id="enabled"><label for="enabled" style="margin:0">启用定时任务</label>
+      <div class="switches">
+        <label class="switch">
+          <input type="checkbox" id="enabled"><span>启用定时任务</span>
+        </label>
+        <label class="switch">
+          <input type="checkbox" id="dryRun"><span>演练模式（不真正提交）</span>
+        </label>
       </div>
-      <div class="switch">
-        <input type="checkbox" id="dryRun"><label for="dryRun" style="margin:0">演练模式（不真正提交）</label>
-      </div>
-      <div id="jobTimes" style="margin-top:14px"></div>
-      <div id="options" style="margin-top:14px"></div>
-      <div class="row" style="margin-top:16px">
+      <div id="jobTimes" class="fields" style="margin-top:18px"></div>
+      <div id="options" class="fields" style="margin-top:18px"></div>
+      <div class="row" style="margin-top:20px">
         <button id="btnSave">保存设置</button>
       </div>
     </div>
-  </div>
 
-  <div class="card">
-    <h2>立即执行</h2>
-    <div class="row" id="runButtons"></div>
-  </div>
+    <div class="card">
+      <h2>立即执行</h2>
+      <div class="row" id="runButtons"></div>
+    </div>
 
-  <div class="card">
-    <h2>运行记录</h2>
-    <div id="runs" class="muted">暂无记录</div>
+    <div class="card">
+      <h2>运行记录</h2>
+      <div id="runs" class="muted">暂无记录</div>
+    </div>
   </div>
 </div>
 <div class="toast" id="toast"></div>
@@ -110,9 +128,12 @@ let detail = null;
 
 function renderFields() {
   $('#fields').innerHTML = detail.credential_fields.map(f=>`
-    <label>${f.label}</label>
-    <input data-field="${f.name}" type="${f.type==='password'?'password':'text'}"
-           ${f.secret?'data-secret="1"':''}>`).join('');
+    <label for="f-${f.name}">${f.label}</label>
+    <input id="f-${f.name}" data-field="${f.name}"
+           type="${f.type==='password'?'password':'text'}"
+           ${f.secret?'data-secret="1"':''}
+           placeholder="${f.type==='password'?'请输入密码':''}"
+           autocomplete="${f.secret?'current-password':'username'}">`).join('');
 }
 
 function renderJobs() {
@@ -179,21 +200,71 @@ async function loadRuns() {
     : '<span class="muted">暂无记录</span>';
 }
 
+/* 是否已登录：只有 active / expired / error 才算配过凭据；
+   expired / error 仍显示身份卡，便于用户直接点「切换登录」修复。 */
+function isLoggedIn(){
+  return detail.state === 'active';
+}
+
+/* 切换面板显隐。switching=true 表示已登录用户主动点了「切换登录」 */
+function applyLayout(switching){
+  const authed = isLoggedIn() && !switching;
+  $('#loginPanel').hidden = authed;
+  $('#identityPanel').hidden = !isLoggedIn() || switching;
+  $('#authedArea').hidden = !authed;
+
+  // 「取消」只在已登录、且是主动切换时出现
+  $('#btnCancelSwitch').hidden = !(switching && isLoggedIn());
+
+  // 未登录时登录框标题强调，切换时提示会清空什么
+  $('#loginTitle').textContent = switching ? '切换到其他账号'
+    : (isLoggedIn() ? '登录' : '请先登录');
+
+  const [label,cls] = STATE_LABEL[detail.state]||[detail.state,''];
+  $('#stateBadge').textContent = label;
+  $('#stateBadge').className = 'badge ' + cls;
+
+  // 失效/异常时把具体原因告诉用户，否则只会看到「登录失效」不知所措
+  const hint = $('#credHint');
+  if((detail.state === 'expired' || detail.state === 'error') && detail.last_error){
+    hint.innerHTML = `<span class="err">${detail.last_error}</span>`;
+  }
+
+  $('#credDisplay').textContent = detail.display || '—';
+  $('#credAccount').textContent = detail.display || '—';
+  // 头像取显示名首字
+  $('#avatar').textContent = (detail.display || '?').trim().charAt(0) || '?';
+}
+
 async function load() {
   detail = await api(`/api/features/${KEY}`);
   document.title = detail.name;
   $('#fname').textContent = detail.name;
-  const [label,cls] = STATE_LABEL[detail.state]||[detail.state,''];
-  $('#stateBadge').textContent = label;
-  $('#stateBadge').className = 'badge ' + cls;
   $('#credHint').textContent = detail.credential_kind === 'interactive'
     ? '需要短信验证码 / 扫码，登录态失效后须重新登录'
     : '账号密码型，登录态失效会自动重登';
-  $('#credDisplay').textContent = detail.display || '—';
   $('#enabled').checked = !!detail.config.enabled;
   $('#dryRun').checked = !!detail.config.dry_run;
-  renderFields(); renderJobs(); renderOptions(); await loadRuns();
+  applyLayout(switching);
+
+  renderFields(); renderJobs(); renderOptions();
+  if(isLoggedIn()) await loadRuns();
 }
+
+/* 切换登录的临时状态 */
+let switching = false;
+
+$('#btnSwitch').onclick = () => {
+  switching = true;
+  applyLayout(true);
+  renderFields();               // 重建输入框，密码不残留
+  $('#loginPanel').scrollIntoView({behavior:'smooth', block:'nearest'});
+};
+
+$('#btnCancelSwitch').onclick = () => {
+  switching = false;
+  applyLayout(false);
+};
 
 $('#btnLogin').onclick = async () => {
   const payload = {};
@@ -206,6 +277,7 @@ $('#btnLogin').onclick = async () => {
   try {
     const d = await api(`/api/features/${KEY}/login`,{method:'POST',body:JSON.stringify(payload)});
     toast('登录成功：' + (d.display||''),'ok');
+    switching = false;            // 登录成功即退出切换态
     await load();
   } catch(e){ toast(e.message,'err'); }
   finally { restore(); }
