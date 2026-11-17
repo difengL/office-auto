@@ -14,6 +14,9 @@ LOGIN_PAGE = "/login"
 LOGIN_API = "/api/login"
 REMEMBER_ME_DAYS = 7
 
+# 工时填报可选的项目分类（对应工时页「内部工作 / 内部项目 / 客户项目」三个页签）
+PROJECT_KINDS = ("INTERNAL_WORK", "INTERNAL_PROJECT", "CUSTOMER_PROJECT")
+
 
 class HemError(Exception):
     def __init__(self, message: str):
@@ -85,15 +88,34 @@ class HemClient:
         return payload
 
     def list_projects(self) -> list[dict]:
-        payload = self._get("/api/localproject/list", {"page_size": 10000})
-        data = payload.get("data") or {}
-        items = data.get("list") if isinstance(data, dict) else data
-        out = []
-        for p in items or []:
-            pid = p.get("project_id") or p.get("projectId")
-            name = p.get("name") or ""
-            if pid and name:
-                out.append({"project_id": str(pid), "name": name})
+        """列出「可填报工时的项目」。
+
+        用 /api/hem/workhour/projects —— 这是工时填报页自身用的接口。
+        不能用 /api/localproject/list：那是 CRM 项目列表（含护理假等假勤伪项目），
+        且实测要 7~8 秒，而本接口约 0.1~0.3 秒。
+        """
+        out: list[dict] = []
+        seen: set[tuple[str, str]] = set()
+        for kind in PROJECT_KINDS:
+            payload = self._get("/api/hem/workhour/projects",
+                                {"type": kind, "pageNo": 1, "pageSize": 500})
+            for p in payload.get("data") or []:
+                pid = p.get("projectId")
+                sid = p.get("subProjectId")
+                name = p.get("projectName") or ""
+                if not pid or not name:
+                    continue
+                key = (str(pid), str(sid))
+                if key in seen:
+                    continue
+                seen.add(key)
+                out.append({
+                    "project_id": str(pid),
+                    "sub_project_id": str(sid) if sid is not None else "",
+                    "name": name,
+                    "category": p.get("category") or kind,
+                    "project_class": p.get("projectClassName") or "",
+                })
         return out
 
     def week_records(self, start: date, end: date) -> list[dict]:

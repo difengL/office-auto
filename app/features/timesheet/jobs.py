@@ -27,6 +27,11 @@ def plan_week(records: list[dict], days: list[date], default_hours: float) -> di
     }
 
 
+def project_key(p: dict) -> str:
+    """项目的稳定标识。工时按 subProjectId 归属，同一 projectId 可能有多个子项目。"""
+    return f"{p['project_id']}:{p.get('sub_project_id', '')}"
+
+
 def resolve_project(client: HemClient, wanted: str | None) -> dict:
     """项目选择：用户已选且仍在列表里 → 用它；否则回退第一个（规格确认的默认规则）。"""
     projects = client.list_projects()
@@ -34,7 +39,7 @@ def resolve_project(client: HemClient, wanted: str | None) -> dict:
         raise HemError("账号下没有可用项目")
     if wanted:
         for p in projects:
-            if p["project_id"] == str(wanted):
+            if project_key(p) == str(wanted) or p["project_id"] == str(wanted):
                 return p
     return projects[0]
 

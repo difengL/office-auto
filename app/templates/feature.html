@@ -6,6 +6,7 @@
 {% include '_style.html' %}
 </head>
 <body>
+<div id="topbar"></div>
 <div class="wrap">
   <header>
     <a href="/" class="ghost" style="text-decoration:none;padding:8px 14px;border:1px solid var(--line);border-radius:10px;color:var(--text)">← 返回</a>
@@ -57,12 +58,50 @@ let toastTimer;
 function toast(m,k=''){const t=$('#toast');t.textContent=m;t.className='toast show '+k;
   clearTimeout(toastTimer);toastTimer=setTimeout(()=>t.className='toast',3200);}
 const KEY = location.pathname.split('/').pop();
+
+/* ---------- 全局忙碌指示 ---------- */
+let busyCount = 0, barTimer;
+function busyPush(){
+  if(busyCount++ === 0){
+    const bar = $('#topbar');
+    bar.className = 'on'; bar.style.width = '8%';
+    let p = 8;
+    clearInterval(barTimer);
+    barTimer = setInterval(()=>{
+      // 慢慢爬到 90%，真正的 100% 由请求结束时触发
+      p = Math.min(90, p + Math.max(0.6, (90 - p) * 0.06));
+      bar.style.width = p + '%';
+    }, 200);
+  }
+}
+function busyPop(){
+  if(--busyCount > 0) return;
+  busyCount = 0;
+  clearInterval(barTimer);
+  const bar = $('#topbar');
+  bar.style.width = '100%';
+  setTimeout(()=>{ bar.className = ''; bar.style.width = '0'; }, 260);
+}
+
+/* 把按钮切成加载态，返回恢复函数 */
+function withLoading(btn, text){
+  if(!btn) return ()=>{};
+  const html = btn.innerHTML;
+  btn.classList.add('loading');
+  btn.disabled = true;
+  if(text) btn.setAttribute('data-loading-text', text);
+  return ()=>{ btn.classList.remove('loading'); btn.disabled = false; btn.innerHTML = html; };
+}
+
 async function api(p,o={}){
-  const r=await fetch(p,{headers:{'content-type':'application/json'},...o});
-  const d=await r.json().catch(()=>({}));
-  if(r.status===401){location.href='/login';throw new Error('未登录');}
-  if(!r.ok) throw new Error(d.detail||('HTTP '+r.status));
-  return d;
+  busyPush();
+  try{
+    const r=await fetch(p,{headers:{'content-type':'application/json'},...o});
+    const d=await r.json().catch(()=>({}));
+    if(r.status===401){location.href='/login';throw new Error('未登录');}
+    if(!r.ok) throw new Error(d.detail||('HTTP '+r.status));
+    return d;
+  } finally { busyPop(); }
 }
 const STATE_LABEL={not_configured:['未配置',''],active:['已登录','on'],
   expired:['登录失效','err'],error:['异常','err']};
@@ -92,14 +131,15 @@ function renderJobs() {
     `<button class="ghost" data-run="${j.job_id}">立即执行：${j.name}</button>`).join('');
   document.querySelectorAll('[data-run]').forEach(b=>{
     b.onclick = async () => {
-      b.disabled = true;
+      const restore = withLoading(b, '执行中…');
+      toast('正在执行，请稍候…');
       try {
         const r = await api(`/api/features/${KEY}/run`,
           {method:'POST', body: JSON.stringify({job_id: b.dataset.run})});
         toast(r.message || (r.ok?'完成':'失败'), r.ok?'ok':'err');
         await loadRuns();
       } catch(e){ toast(e.message,'err'); }
-      finally { b.disabled = false; }
+      finally { restore(); }
     };
   });
 }
@@ -120,11 +160,12 @@ function renderOptions() {
   }).join('');
   document.querySelectorAll('[data-refresh]').forEach(b=>{
     b.onclick = async () => {
-      b.disabled = true;
+      const restore = withLoading(b, '刷新中…');
+      toast('正在向 HEM 拉取项目列表…');
       try { await api(`/api/features/${KEY}/options/refresh`,{method:'POST'});
             toast('已刷新','ok'); await load(); }
       catch(e){ toast(e.message,'err'); }
-      finally { b.disabled = false; }
+      finally { restore(); }
     };
   });
 }
@@ -160,13 +201,14 @@ $('#btnLogin').onclick = async () => {
   document.querySelectorAll('[data-field]').forEach(i=>{
     payload[i.dataset.field] = i.dataset.secret ? i.value : i.value.trim();
   });
-  $('#btnLogin').disabled = true;
+  const restore = withLoading($('#btnLogin'), '登录中…');
+  toast('正在登录并拉取项目列表，约需数秒…');
   try {
     const d = await api(`/api/features/${KEY}/login`,{method:'POST',body:JSON.stringify(payload)});
     toast('登录成功：' + (d.display||''),'ok');
     await load();
   } catch(e){ toast(e.message,'err'); }
-  finally { $('#btnLogin').disabled = false; }
+  finally { restore(); }
 };
 
 function parseTimeInput(text, prev) {
@@ -185,6 +227,7 @@ $('#btnSave').onclick = async () => {
   });
   const options = { ...(detail.config.options || {}) };
   document.querySelectorAll('[data-opt]').forEach(i => { options[i.dataset.opt] = i.value; });
+  const restore = withLoading($('#btnSave'), '保存中…');
   try {
     await api(`/api/features/${KEY}/config`, {method:'POST', body: JSON.stringify({
       enabled: $('#enabled').checked, dry_run: $('#dryRun').checked, schedule, options
@@ -192,9 +235,16 @@ $('#btnSave').onclick = async () => {
     toast('设置已保存','ok');
     await load();
   } catch(e){ toast(e.message,'err'); }
+  finally { restore(); }
 };
 
-load().catch(e => toast(e.message,'err'));
+/* 首屏加载：标题旁显示「加载中」，而不是干等 */
+(function boot(){
+  const badge = $('#stateBadge');
+  badge.textContent = '加载中…'; badge.className = 'badge busy';
+  load().catch(e => { toast(e.message,'err');
+    badge.textContent='加载失败'; badge.className='badge err'; });
+})();
 </script>
 </body>
 </html>

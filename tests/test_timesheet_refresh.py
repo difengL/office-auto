@@ -51,9 +51,9 @@ class FakeClient:
     def list_projects(self):
         self.calls.append("list_projects")
         if not self.logged_in:
-            raise feat.HemError("/api/localproject/list 返回非 JSON（登录态可能失效）")
-        return [{"project_id": "6001", "name": "百察智能体项目"},
-                {"project_id": "7051", "name": "百灵-百回催收系统"}]
+            raise feat.HemError("/api/hem/workhour/projects 返回非 JSON（登录态可能失效）")
+        return [{"project_id": "6001", "sub_project_id": "17560", "name": "百察智能体项目"},
+                {"project_id": "7051", "sub_project_id": "19799", "name": "百灵-百回催收系统"}]
 
 
 @pytest.fixture
@@ -78,7 +78,8 @@ def test_refresh_logs_in_before_listing_projects(fake):
     client = fake.instances[0]
     # 顺序必须先是 login，再是 list_projects
     assert client.calls == ["login", "list_projects"]
-    assert [x["value"] for x in items] == ["6001", "7051"]
+    # 值是 project_id:sub_project_id 组合，工时才不会落到错误的子项目
+    assert [x["value"] for x in items] == ["6001:17560", "7051:19799"]
 
 
 def test_refresh_returns_value_label_pairs(fake):
@@ -87,7 +88,7 @@ def test_refresh_returns_value_label_pairs(fake):
 
     items = asyncio.run(TimesheetFeature().refresh_options(u.id))
 
-    assert items[0] == {"value": "6001", "label": "百察智能体项目"}
+    assert items[0] == {"value": "6001:17560", "label": "百察智能体项目"}
 
 
 def test_refresh_closes_client(fake):
@@ -107,6 +108,7 @@ def test_refresh_caches_projects(fake):
 
     cached = db.fdata_get(u.id, "timesheet", "projects", [])
     assert [x["project_id"] for x in cached] == ["6001", "7051"]
+    assert [x["sub_project_id"] for x in cached] == ["17560", "19799"]
 
 
 def test_refresh_raises_login_error_on_failure(fake, monkeypatch):

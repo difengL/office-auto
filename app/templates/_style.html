@@ -29,6 +29,26 @@
   button{padding:10px 18px;border-radius:10px;border:0;cursor:pointer;font-size:15px;
     background:linear-gradient(135deg,var(--accent),var(--accent-2));color:#1a1206;font-weight:600}
   button:disabled{opacity:.5;cursor:not-allowed}
+
+  /* 按钮加载态：转圈 + 文案，让 3~8 秒的等待可见 */
+  button.loading{position:relative;color:transparent !important;pointer-events:none}
+  button.loading::after{
+    content:"";position:absolute;top:50%;left:50%;width:16px;height:16px;
+    margin:-8px 0 0 -8px;border-radius:50%;
+    border:2px solid rgba(0,0,0,.25);border-top-color:currentColor;
+    animation:btn-spin .7s linear infinite}
+  button.ghost.loading::after{border-color:rgba(230,232,238,.25);border-top-color:var(--text)}
+  /* 主按钮的 spinner 用深色，透明白会看不清 */
+  button:not(.ghost).loading::after{
+    border-color:rgba(26,18,6,.25);border-top-color:#1a1206}
+  @keyframes btn-spin{to{transform:rotate(360deg)}}
+
+  /* 顶部进度条：任何请求进行中时显示 */
+  #topbar{position:fixed;top:0;left:0;height:2px;width:0;z-index:99;
+    background:linear-gradient(90deg,var(--accent),var(--accent-2));
+    transition:width .25s ease,opacity .3s;opacity:0}
+  #topbar.on{opacity:1}
+
   button.ghost{background:var(--panel-2);color:var(--text);border:1px solid var(--line);font-weight:400}
   .row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
   .grid{display:grid;gap:16px}
@@ -53,4 +73,5 @@
   .kv span:first-child{color:var(--muted)}
   .switch{display:flex;align-items:center;gap:10px}
   .switch input{width:auto}
+  .badge.busy{color:var(--accent-2);border-color:#4d3f1f}
 </style>

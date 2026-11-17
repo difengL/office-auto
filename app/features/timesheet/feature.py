@@ -46,8 +46,10 @@ class TimesheetFeature(Feature):
         db.fdata_set(user_id, self.key, "projects", projects)
         default = projects[0] if projects else None
         return {"display": info.get("name") or username,
-                "projects": projects,
-                "default_project": default}
+                "projects": [{"value": jobs.project_key(p), "label": p["name"]}
+                             for p in projects],
+                "default_project": ({"value": jobs.project_key(default),
+                                     "label": default["name"]} if default else None)}
 
     async def check_alive(self, user_id: int) -> bool:
         return await self.relogin(user_id)
@@ -98,4 +100,4 @@ class TimesheetFeature(Feature):
             except HemError as exc:
                 raise FeatureLoginError(f"拉取项目失败：{exc.message}") from exc
         db.fdata_set(user_id, self.key, "projects", projects)
-        return [{"value": x["project_id"], "label": x["name"]} for x in projects]
+        return [{"value": jobs.project_key(x), "label": x["name"]} for x in projects]
