@@ -51,6 +51,7 @@
           <input type="checkbox" id="dryRun"><span>演练模式（不真正提交）</span>
         </label>
       </div>
+      <div id="alwaysOnNote" class="note" hidden></div>
       <div id="jobTimes" class="fields" style="margin-top:18px"></div>
       <div id="options" class="fields" style="margin-top:18px"></div>
       <div class="row" style="margin-top:20px">
@@ -198,6 +199,23 @@ function renderJobs() {
               下次：${j.next_run||'未启用'}${j.failures>=3?` · <span class="err">连续失败 ${j.failures} 次</span>`:''}
             </div>`;
   }).join('');
+
+  // 常开任务（登录保活）是基础设施，不受开关控制，单独说明而不是给开关
+  const always = detail.jobs.filter(j=>j.always_on);
+  const note = $('#alwaysOnNote');
+  if(always.length){
+    note.hidden = false;
+    note.innerHTML = always.map(j=>{
+      const cur = j.trigger==='interval'
+        ? `每 ${j.default?.minutes ?? 30} 分钟` : j.default?.hour??'';
+      const next = j.next_run ? `下次 ${j.next_run}` : '尚未排期';
+      return `<div><span class="dot"></span><b>${j.name}</b> 自动运行（${cur}），
+              用于保持登录状态，无需手动开启。${next}</div>`;
+    }).join('');
+  } else {
+    note.hidden = true;
+  }
+
   $('#runButtons').innerHTML = detail.jobs.map(j=>
     `<button class="ghost" data-run="${j.job_id}">立即执行：${j.name}</button>`).join('');
   document.querySelectorAll('[data-run]').forEach(b=>{

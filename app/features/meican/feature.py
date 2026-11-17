@@ -25,7 +25,11 @@ class MeicanFeature(Feature):
     default_jobs = [
         JobSpec("order", "自动订餐", "cron",
                 {"hour": 10, "minute": 5, "day_of_week": "mon-fri"}, jitter=180),
-        JobSpec("keepalive", "登录保活", "interval", {"hours": 6}, jitter=300, editable=False),
+        # accessToken 的 TTL 是「最后一次使用后 1 小时」，保活间隔必须明显
+        # 小于它，否则中间会出现 token 已死的窗口，恰好撞上订餐就会失败。
+        # 30 分钟一次，留足重试余量。
+        JobSpec("keepalive", "登录保活", "interval", {"minutes": 30}, jitter=300,
+                editable=False, always_on=True),
     ]
 
     async def login(self, user_id: int, payload: dict) -> dict:

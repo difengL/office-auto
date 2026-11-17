@@ -40,6 +40,16 @@ def _interval_trigger(spec, override: dict) -> dict:
     return kw
 
 
+def _keepalive_eligible(user_id: int, feature_key: str) -> bool:
+    """常开任务的前提：凭据存在且有效。
+
+    失效态不调度——交互型凭据无法自动重登，空转只会刷一堆失败记录；
+    等用户重新登录后，登录接口会再次触发 reschedule。
+    """
+    cred = db.load_credential(user_id, feature_key)
+    return cred.state == "active"
+
+
 def reschedule_user(user_id: int) -> None:
     """重建某用户的全部任务（先删后加）。"""
     prefix_suffix = f":{user_id}"
@@ -49,9 +59,12 @@ def reschedule_user(user_id: int) -> None:
 
     for feature in registry.all():
         cfg = db.load_feature_config(user_id, feature.key)
-        if not cfg.enabled:
-            continue
         for spec in feature.default_jobs:
+            # always_on 的任务不受总开关约束，其余必须 cfg.enabled
+            if not (cfg.enabled or spec.always_on):
+                continue
+            if spec.always_on and not _keepalive_eligible(user_id, feature.key):
+                continue
             jid = job_id(feature.key, spec.job_id, user_id)
             override = cfg.schedule.get(spec.job_id, {}) if spec.editable else {}
             if spec.trigger == "interval":
@@ -67,7 +80,13 @@ def reschedule_user(user_id: int) -> None:
 
 
 def reschedule_all() -> None:
-    for user_id, _feature_key in db.enabled_feature_pairs():
+    """重建所有用户的任务。
+
+    不能只看 enabled_feature_pairs：常开任务（保活）在开关关闭、
+    用户从未保存过配置时也要跑，所以所有有凭据的用户都要覆盖到。
+    """
+    pairs = set(db.enabled_feature_pairs()) | set(db.credential_pairs())
+    for user_id in {u for u, _k in pairs}:
         reschedule_user(user_id)
 
 

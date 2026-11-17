@@ -334,6 +334,18 @@ def enabled_feature_pairs() -> list[tuple[int, str]]:
     return [(r["user_id"], r["feature_key"]) for r in rows]
 
 
+def credential_pairs() -> list[tuple[int, str]]:
+    """所有保存过凭据的 (user, feature)，不看功能开关。
+
+    常开任务（如登录保活）需要用它——用户可能从没保存过配置，
+    但登录过，保活就该跑。
+    """
+    with conn() as c:
+        rows = c.execute(
+            "SELECT user_id, feature_key FROM feature_credentials").fetchall()
+    return [(r["user_id"], r["feature_key"]) for r in rows]
+
+
 # ---------------- 功能 KV ----------------
 
 def fdata_get(user_id: int, feature_key: str, key: str, default=None):

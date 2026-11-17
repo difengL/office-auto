@@ -49,6 +49,9 @@ class JobSpec:
     default: dict               # cron: hour/minute/second/day_of_week；interval: minutes/hours
     jitter: int = 0             # 随机抖动秒数
     editable: bool = True
+    # 基础设施型任务（如登录保活）：不跟着「启用定时任务」开关，只要凭据
+    # 有效就自动运行。用户不需要理解它，也不该因为忘了打勾就掉登录态。
+    always_on: bool = False
 
 
 @dataclass

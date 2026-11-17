@@ -183,6 +183,8 @@ def feature_login(key: str, body: dict,
         raise HTTPException(400, str(exc)) from exc
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(400, f"{type(exc).__name__}: {exc}") from exc
+    # 凭据刚变为有效：常开任务（保活）要从「无凭据不调度」变成开跑
+    scheduler.reschedule_user(user.id)
     return {"ok": True, **info}
 
 
