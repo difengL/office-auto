@@ -24,6 +24,19 @@ WEB_PC_APP = "meican/web-pc (prod;4.97.4;sys;main)"
 REGULATION_IMG_HEADER = {"x-mc-demeterfe-image": "oops-4841-regulation"}
 
 
+def _extract_cookie(r: httpx.Response, name: str) -> str:
+    """从响应的 Set-Cookie 里取指定 cookie 的值（可能有多条）。"""
+    raw = r.headers.get_list("set-cookie")
+    for item in raw:
+        head = item.split(";", 1)[0]
+        if "=" not in head:
+            continue
+        k, v = head.split("=", 1)
+        if k.strip() == name:
+            return v.strip()
+    return ""
+
+
 class MeicanError(Exception):
     def __init__(self, message: str, status: int | None = None, payload: Any = None):
         super().__init__(message)
@@ -40,13 +53,89 @@ class MeicanClient:
     # ---------- 登录（v4 GraphQL）----------
 
     def send_sms_code(self, phone: str) -> None:
-        """发送短信验证码（v4 通道）。注意：接口可能静默限流，返回 OK 但短信不发。"""
+        """发送短信验证码（v4 GraphQL 通道，配 login_with_sms 使用）。
+
+        注意：接口可能静默限流，返回 OK 但短信不发。
+        """
         self._gql(
             "GetPhoneVerificationCode",
             "mutation GetPhoneVerificationCode($input: UserCenterSsoV2PhoneVerificationCodeRequest!)"
             " { getPhoneVerificationCode(input: $input) }",
             {"input": {"phone": phone, "idpType": "UserCenterIDP"}},
         )
+
+    def send_sms_code_v3(self, phone: str) -> None:
+        """发送短信验证码（v3 REST 通道，配 oauth_token_with_code 使用）。
+
+        两个通道的验证码互不通用：GraphQL 发的码 OAuth 不认，反之亦然。
+        要拿长期 remember cookie 就必须走这一条。
+        字段名是 mobileNumber（不是 mobile），实测确认。
+        """
+        r = self._client.post(
+            f"{V3_BASE}/accounts/sendVerifyCode",
+            params={"client_id": V3_CLIENT_ID, "client_secret": V3_CLIENT_SECRET},
+            data={"mobileNumber": phone},
+            headers={"accept": "application/json"},
+        )
+        try:
+            p = r.json()
+        except Exception as exc:  # noqa: BLE001
+            raise MeicanError(f"发码返回非 JSON (HTTP {r.status_code})") from exc
+        if p.get("resultCode") != "OK":
+            left = (p.get("data") or {}).get("left")
+            if left:
+                raise MeicanError(f"发送过于频繁，请 {left} 秒后再试", r.status_code, p)
+            raise MeicanError(p.get("resultDescription") or "发送验证码失败",
+                              r.status_code, p)
+
+    # ---------- 长期凭据（remember cookie）----------
+    #
+    # 美餐前端登录时带 ?remember=true 请求 oauth/token，服务端会在响应里
+    # Set-Cookie 下发 remember=<长串>，有效期约 1 年（部分路径 10 年）。
+    # 之后只需拿这个 cookie 再请求一次 oauth/token 就能换出新 token，
+    # 全程不需要短信验证码。这是手机端长期免登录的真正原因，
+    # 不是「token 一直在续命」——token 本身只活 1 小时。
+
+    def oauth_token_with_code(self, phone: str, code: str) -> dict:
+        """用短信验证码换 token，并尝试拿到长期 remember cookie。
+
+        返回 {"token": {...}, "remember": "..." | ""}。
+        """
+        r = self._client.post(
+            f"{V3_BASE}/oauth/token",
+            params={"client_id": V3_CLIENT_ID, "client_secret": V3_CLIENT_SECRET,
+                    "remember": "true"},
+            data={"grant_type": "password",
+                  "meican_credential_type": "mobile_verify_code",
+                  "mobile": phone, "verifyCode": code, "x": "true"},
+            headers={"accept": "application/json"},
+        )
+        payload = self._parse_oauth(r)
+        return {"token": payload, "remember": _extract_cookie(r, "remember")}
+
+    def oauth_token_with_remember(self, remember: str) -> dict:
+        """用 remember cookie 换新 token。失败说明长期凭据已失效。"""
+        r = self._client.post(
+            f"{V3_BASE}/oauth/token",
+            params={"client_id": V3_CLIENT_ID, "client_secret": V3_CLIENT_SECRET},
+            data={"grant_type": "password", "meican_credential_type": "cookie"},
+            headers={"accept": "application/json", "Cookie": f"remember={remember}"},
+        )
+        return self._parse_oauth(r)
+
+    @staticmethod
+    def _parse_oauth(r: httpx.Response) -> dict:
+        if r.status_code >= 400:
+            try:
+                p = r.json()
+            except Exception:  # noqa: BLE001
+                p = {}
+            msg = p.get("error_description") or p.get("error") or f"HTTP {r.status_code}"
+            raise MeicanError(msg, r.status_code, p)
+        data = r.json()
+        if not data.get("access_token"):
+            raise MeicanError("未返回 access_token", payload=data)
+        return data
 
     def login_with_sms(self, phone: str, code: str) -> dict:
         """验证码登录，返回 {ticket, signature, users}。"""

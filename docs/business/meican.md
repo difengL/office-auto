@@ -2,27 +2,106 @@
 
 从旧版单功能 README 迁出的实测结论，重构后仍然适用。
 
-## Token 保活规律（重要）
+## 长期免登录：remember cookie（2026-11-17 更正）
 
-美餐没有长期凭据。实测：
+**早期结论「美餐没有长期凭据」是错的。** 当时只测了 refreshToken，
+用错接口（v3/v4 GraphQL）去刷，自然一直失败。翻阅美餐前端 bundle
+（`demeter-fe/aa22780.js`）后找到真实机制：
 
 | 凭据 | 行为 |
 |---|---|
 | accessToken | TTL 是「**最后一次使用后** 1 小时」，不是签发后 1 小时 |
-| refreshToken | 声明 1 小时，实测立即无效，无法续期 |
+| refreshToken | 走的是 **OAuth `/oauth/token`**，不是 GraphQL；声明 1 小时 |
+| **remember cookie** | **实测服务端下发 `expires` 约 2 个月**（2026-11-17 登录 → 2027-01-16 到期）。前端 `persistCookieAgain` 会把浏览器侧 maxAge 重写为 10 年，但服务端真实有效期以 Set-Cookie 的 expires 为准 |
 | ticket | 一次性 |
 
-所以必须周期性请求轻量接口续命。手机端能数月不登录，是同样的原理——持续在用，每次请求都在续期。
+### ⚠️ 两套验证码体系互不通用（最大的坑）
 
-平台里由 `keepalive` 任务承担，默认每 6 小时一次（`editable=False`，不接受用户改）。
-保活失败 → 凭据置 `expired` → 因为是交互型，框架不会自动重登，需人工重新短信登录。
+美餐有**两条独立的登录通道**，各自发各自的验证码，**互相不认**：
+
+| 通道 | 发码接口 | 登录接口 | 验证码位数 | 能否拿 remember |
+|---|---|---|---|---|
+| v4 GraphQL | `GetPhoneVerificationCode`（gateway.meican.com） | `loginByAuthWay` | 6 位 | ❌ |
+| **v3 REST** | `accounts/sendVerifyCode`（字段名 **`mobileNumber`**） | `oauth/token` | **4 位** | ✅ |
+
+**要拿长期 remember cookie，发码和登录必须都走 v3。** 用 GraphQL 发的 6 位码
+去调 v3 的 `oauth/token` 会一直报「验证码无效」——这不是码错了，是通道不匹配。
+排查时曾因此浪费多次短信。平台现在发码（`send_sms_code_v3`）与登录
+（`oauth_token_with_code`）都走 v3，配套一致。
+
+### 三个关键接口（v3，均带 client_id / client_secret query）
+
+基础地址 `https://www.meican.com/forward/api/v2.1`。
+
+**1. 发码**
+
+```
+POST /accounts/sendVerifyCode
+     mobileNumber=<手机号>          ← 注意是 mobileNumber，不是 mobile
+
+→ {"resultCode":"OK","resultDescription":"SUCCESS"}
+→ 限流时 {"resultCode":"FAIL","data":{"left":<剩余秒数>}}
+```
+
+**2. 登录拿 remember**
+
+```
+POST /oauth/token?remember=true
+     grant_type=password
+     meican_credential_type=mobile_verify_code
+     mobile=<手机号>&verifyCode=<4位码>&x=true
+
+→ 响应体：access_token / refresh_token / token_type / expires_in
+→ 响应头：Set-Cookie: remember=<49字符>（expires 约 2 个月）
+```
+
+前端对应 `getTokenAndCookie()`。`meican_credential_type` 合法值（服务端报错泄漏）：
+`password / mobile_temp_password / mobile_temp_password_with_signup /
+card_inside_number / new_user / user_hashid / mobile_verify_code / cookie / simple_auth`。
+
+**3. 用 remember 换新 token（无需验证码）**
+
+```
+POST /oauth/token
+     grant_type=password
+     meican_credential_type=cookie
+     Cookie: remember=<49字符>
+
+→ 新的 access_token / refresh_token（expires_in=3600）
+```
+
+前端对应 `getTokenUsingCookie()`。**已实测打通**：换出的新 token 能正常调
+`accounts/show` 与 `calendarItems/list`。remember 失效时返回
+`invalid_grant: Refresh token is expired or not valid`。
+
+### 对平台的影响
+
+- **登录双通道**：`MeicanFeature.login` 首选 v3 `oauth_token_with_code`（能拿
+  remember）；失败回退 GraphQL `login_with_sms`（能登录但无长期凭据）。
+  发码 `send_action` 走 v3 `send_sms_code_v3`，与首选登录通道配套。
+- `MeicanFeature.can_relogin = True`：交互型凭据在**有长期凭据时**可以自动续期，
+  框架据此允许 `runner` 调用 `relogin`，不再直接判定失效。
+- `keepalive` 任务：探测失败时先尝试用 remember 续期（`relogin`），成功则继续，
+  只有 remember 也失效才提示用户重新短信登录。**已实测**：把 accessToken 改成
+  无效值后跑保活，能自动用 remember 换出新 token，消息为
+  「token 已过期，已用长期凭据自动续期」。
+- 登录返回 `long_term` 布尔，前端可据此提示用户是否获得了免登录能力。
+
+### 保活仍然需要
+
+accessToken 只活 1 小时，所以即便有 remember，也必须周期性任务换新 token，
+否则到订餐时 token 已经死了。保活间隔 30 分钟（`always_on`，不受功能开关约束）。
+remember 本身约 2 个月有效，到期前保活会一直用它续期；到期后才需要重新短信登录。
 
 ## 登录
 
-- 验证码是 **4 位**，不是 6 位。
-- 发码有静默限流：接口返回 OK 但短信不发，同号当天超过 4 次容易触发。
+- v3 通道验证码是 **4 位**；GraphQL 通道是 6 位。两者不通用（见上）。
+- 发码有静默限流：接口返回 OK 但短信不发，同号当天超过 4 次容易触发；
+  v3 限流会明确返回 `data.left` 剩余秒数。
 - 验证码一次性使用，`MeicanFeature.login` 成功后会从 payload 里 `pop("code")`，不落库。
-- 一个手机号下可能有多个账号，优先选 `accountVersion == "AccountThreeDotZero"`。
+- 一个手机号下可能有多个账号，GraphQL 回退路径优先选 `accountVersion == "AccountThreeDotZero"`。
+- `accounts/show` 对 v3 账号返回空字典（不报错），**不能**用它判断 token 存活；
+  保活探测靠 HTTP 401，业务验证用 `calendarItems/list`。
 
 ## 订餐窗口
 

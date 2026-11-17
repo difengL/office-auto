@@ -37,16 +37,17 @@ def execute(user_id: int, feature_key: str, job_id: str) -> JobResult:
 
     async def _run() -> JobResult:
         if not await feature.check_alive(user_id):
-            if feature.credential_kind == CredentialKind.PASSWORD:
-                if not await feature.relogin(user_id):
-                    db.set_credential_state(user_id, feature_key,
-                                            FeatureState.EXPIRED.value, "自动重登失败")
-                    return JobResult(
-                        False, "登录态失效且自动重登失败，账号或密码可能已变更，请重新登录")
-            else:
+            # PASSWORD 型用账号密码重登；INTERACTIVE 型默认不行，
+            # 除非插件声明支持（如美餐靠 remember cookie 换 token）。
+            renewable = (feature.credential_kind == CredentialKind.PASSWORD
+                         or feature.can_relogin)
+            if not renewable or not await feature.relogin(user_id):
+                reason = ("自动重登失败，账号或密码可能已变更，请重新登录"
+                          if feature.credential_kind == CredentialKind.PASSWORD
+                          else "登录态失效且无法自动续期，请重新短信或扫码登录")
                 db.set_credential_state(user_id, feature_key,
-                                        FeatureState.EXPIRED.value, "登录态失效")
-                return JobResult(False, "登录态失效，请重新登录该功能")
+                                        FeatureState.EXPIRED.value, reason)
+                return JobResult(False, reason)
 
         cfg = db.load_feature_config(user_id, feature_key)
         # 从未保存过配置时，dry_run 用插件声明的默认值

@@ -45,6 +45,12 @@ def test_login_strips_code_and_keeps_token(monkeypatch):
         def account(self):
             return {"snowflakeId": "SF1", "name": "张三"}
 
+        def oauth_token_with_code(self, phone, code):
+            # v3 通道成功，下发长期 remember cookie
+            return {"token": {"access_token": "AT", "refresh_token": "RT",
+                              "token_type": "bearer"},
+                    "remember": "RM_LONG_TERM"}
+
         def login_with_sms(self, phone, code):
             return {"ticket": "T", "signature": "S",
                     "userList": [{"accountVersion": "AccountThreeDotZero",
@@ -59,7 +65,9 @@ def test_login_strips_code_and_keeps_token(monkeypatch):
     payload = {"phone": "17600000000", "code": "123456"}
     info = asyncio.run(f.login(u.id, payload))
     assert info["display"] == "张三"
+    assert info["long_term"] is True
     assert payload["accessToken"] == "AT"
+    assert payload["remember"] == "RM_LONG_TERM"
     assert "code" not in payload
     db.save_credential(u.id, "meican", payload, "active")
     assert db.load_credential(u.id, "meican").payload.get("code") is None

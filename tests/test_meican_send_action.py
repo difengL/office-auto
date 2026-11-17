@@ -29,7 +29,7 @@ class FakeClient:
         self.sent_to: list[str] = []
         FakeClient.instances.append(self)
 
-    def send_sms_code(self, phone):
+    def send_sms_code_v3(self, phone):
         if FakeClient.fail:
             raise feat.MeicanError("接口拒绝")
         self.sent_to.append(phone)

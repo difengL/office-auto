@@ -116,8 +116,17 @@ class Feature(ABC):
         """执行任务。"""
 
     async def relogin(self, user_id: int) -> bool:
-        """用已存凭据自动重登。仅 CredentialKind.PASSWORD 需要实现。"""
+        """用已存凭据自动重登。
+
+        PASSWORD 型通常实现为「账号密码再登一次」。
+        INTERACTIVE 型默认不支持——它需要人给验证码；
+        但如果站点下发了长期凭据（如美餐的 remember cookie），
+        插件可以覆写本方法实现无人值守续期，并把 can_relogin 置为 True。
+        """
         return False
+
+    # 交互型凭据是否支持自动续期。默认否，覆写了 relogin 的插件置 True。
+    can_relogin: bool = False
 
     async def refresh_options(self, user_id: int) -> list[dict]:
         """刷新可选项（如下拉数据）。返回 [{"value":..., "label":...}]。"""
