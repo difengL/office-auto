@@ -208,6 +208,20 @@ def feature_config(key: str, body: ConfigBody,
                                    "schedule": cfg.schedule, "options": cfg.options}}
 
 
+@app.post("/api/features/{key}/action")
+def feature_action(key: str, action: str, body: dict,
+                   user: db.User = Depends(web_auth.current_user)):
+    """登录前辅助动作，如发送短信验证码。body 为当前表单内容。"""
+    f = _feature_or_404(key)
+    try:
+        message = asyncio.run(f.send_action(user.id, action, body or {}))
+    except FeatureLoginError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(400, f"{type(exc).__name__}: {exc}") from exc
+    return {"ok": True, "message": message}
+
+
 @app.post("/api/features/{key}/options/refresh")
 def feature_refresh_options(key: str, user: db.User = Depends(web_auth.current_user)):
     f = _feature_or_404(key)

@@ -127,13 +127,63 @@ const STATE_LABEL={not_configured:['未配置',''],active:['已登录','on'],
 let detail = null;
 
 function renderFields() {
-  $('#fields').innerHTML = detail.credential_fields.map(f=>`
-    <label for="f-${f.name}">${f.label}</label>
-    <input id="f-${f.name}" data-field="${f.name}"
+  $('#fields').innerHTML = detail.credential_fields.map(f=>{
+    const input = `<input id="f-${f.name}" data-field="${f.name}"
            type="${f.type==='password'?'password':'text'}"
            ${f.secret?'data-secret="1"':''}
            placeholder="${f.type==='password'?'请输入密码':''}"
-           autocomplete="${f.secret?'current-password':'username'}">`).join('');
+           autocomplete="${f.secret?'current-password':'username'}">`;
+    const label = `<label for="f-${f.name}">${f.label}</label>`;
+    if(!f.action) return label + input;
+    // 需要先发验证码的字段：输入框与按钮并排
+    return label + `<div class="row" style="gap:8px;flex-wrap:nowrap">
+        <div style="flex:1">${input}</div>
+        <button type="button" class="ghost" data-action="${f.action}" style="white-space:nowrap">
+          ${f.action_label || '发送'}</button>
+      </div>`;
+  }).join('');
+
+  document.querySelectorAll('[data-action]').forEach(b=>{
+    b.onclick = async () => {
+      // 发码只需要 phone，取当前表单里所有非验证码字段
+      const payload = {};
+      document.querySelectorAll('[data-field]').forEach(i=>{
+        if(i.dataset.field !== 'code') payload[i.dataset.field] = i.value.trim();
+      });
+      const restore = withLoading(b, '发送中…');
+      try {
+        const r = await api(`/api/features/${KEY}/action?action=${encodeURIComponent(b.dataset.action)}`,
+          {method:'POST', body: JSON.stringify(payload)});
+        toast(r.message || '已发送', 'ok');
+        startCooldown(b, 60);
+        // 焦点移到验证码框，省得用户自己点
+        document.querySelector('[data-field="code"]')?.focus();
+      } catch(e){
+        toast(e.message, 'err');
+        restore();
+      }
+    };
+  });
+}
+
+/* 发码后倒计时，避免用户连续点触发限流 */
+function startCooldown(btn, seconds){
+  const original = btn.dataset.label || btn.textContent.trim();
+  btn.dataset.label = original;
+  btn.classList.remove('loading');
+  let left = seconds;
+  btn.disabled = true;
+  btn.textContent = `${left}s 后可重发`;
+  const timer = setInterval(()=>{
+    left -= 1;
+    if(left <= 0){
+      clearInterval(timer);
+      btn.disabled = false;
+      btn.textContent = original;
+      return;
+    }
+    btn.textContent = `${left}s 后可重发`;
+  }, 1000);
 }
 
 function renderJobs() {

@@ -35,6 +35,10 @@ class FieldSpec:
     type: str = "text"          # text | password
     secret: bool = False
     required: bool = True
+    # 该字段需要先触发一个额外动作（如「发送验证码」）才能填。
+    # 值为动作标识，插件在 send_action() 里按此分发。
+    action: str = ""
+    action_label: str = ""
 
 
 @dataclass
@@ -115,3 +119,11 @@ class Feature(ABC):
     async def refresh_options(self, user_id: int) -> list[dict]:
         """刷新可选项（如下拉数据）。返回 [{"value":..., "label":...}]。"""
         return []
+
+    async def send_action(self, user_id: int, action: str, payload: dict) -> str:
+        """执行登录前的辅助动作（如发送短信验证码）。
+
+        登录尚未完成，此时没有已存凭据，所需信息从 payload 现取
+        （如手机号）。返回给用户看的提示文案。
+        """
+        raise FeatureLoginError(f"不支持的操作：{action}")

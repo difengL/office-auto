@@ -19,7 +19,8 @@ class MeicanFeature(Feature):
     credential_kind = CredentialKind.INTERACTIVE
     credential_fields = [
         FieldSpec("phone", "手机号", type="text"),
-        FieldSpec("code", "短信验证码", type="text"),
+        FieldSpec("code", "短信验证码", type="text",
+                  action="send_sms", action_label="发送验证码"),
     ]
     default_jobs = [
         JobSpec("order", "自动订餐", "cron",
@@ -65,6 +66,20 @@ class MeicanFeature(Feature):
         })
         payload.pop("code", None)          # 验证码是一次性的，不落库
         return {"display": acct.get("name") or phone}
+
+    async def send_action(self, user_id: int, action: str, payload: dict) -> str:
+        if action != "send_sms":
+            raise FeatureLoginError(f"不支持的操作：{action}")
+        phone = (payload.get("phone") or "").strip()
+        if not phone:
+            raise FeatureLoginError("请先填写手机号")
+        client = MeicanClient()
+        try:
+            client.send_sms_code(phone)
+        except MeicanError as exc:
+            raise FeatureLoginError(f"发送验证码失败：{exc}") from exc
+        # 美餐发码是静默限流的：返回成功不代表短信一定到了
+        return "验证码已发送，请注意查收（4 位数字）。若长时间未收到，可能是当日发送次数过多被限流。"
 
     async def check_alive(self, user_id: int) -> bool:
         cred = db.load_credential(user_id, self.key)
