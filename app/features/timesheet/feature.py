@@ -24,6 +24,10 @@ class TimesheetFeature(Feature):
     default_jobs = [
         JobSpec("weekly_submit", "提交周报", "cron",
                 {"hour": 17, "minute": 30, "day_of_week": "fri"}, jitter=300),
+        # 密码型凭据虽然能自动重登，但若密码被改/过期，只有到周五才发现
+        # 就白丢一周工时。每天验一次，出问题当天就能看到。
+        JobSpec("keepalive", "登录保活", "interval", {"hours": 24},
+                jitter=600, editable=False, always_on=True),
     ]
     extra_options = [
         OptionSpec("project_id", "归属项目", type="select",
@@ -67,13 +71,17 @@ class TimesheetFeature(Feature):
                 return False
 
     async def run_job(self, user_id: int, job_id: str, ctx: JobContext) -> JobResult:
-        if job_id != "weekly_submit":
-            return JobResult(False, f"未知任务：{job_id}")
-
         cred = db.load_credential(user_id, self.key)
         p = cred.payload
         if not p.get("username") or not p.get("password"):
             return JobResult(False, "凭据缺失，请重新登录")
+
+        # 保活只验证账号密码仍可用，不做任何写操作
+        if job_id == "keepalive":
+            return self._run_keepalive(p)
+
+        if job_id != "weekly_submit":
+            return JobResult(False, f"未知任务：{job_id}")
 
         project_id = ctx.options.get("project_id") or None
         result = jobs.run_weekly_submit(
@@ -87,6 +95,16 @@ class TimesheetFeature(Feature):
             cfg.options["project_id"] = used
             db.save_feature_config(user_id, self.key, cfg)
         return result
+
+    @staticmethod
+    def _run_keepalive(p: dict) -> JobResult:
+        """只登录一次，确认账号密码还有效。"""
+        with HemClient(p["username"], p["password"]) as client:
+            try:
+                client.login()
+            except HemError as exc:
+                return JobResult(False, f"登录失败，账号密码可能已失效：{exc}")
+        return JobResult(True, "凭据正常，账号密码可用")
 
     async def refresh_options(self, user_id: int) -> list[dict]:
         cred = db.load_credential(user_id, self.key)

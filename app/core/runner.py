@@ -41,7 +41,8 @@ def execute(user_id: int, feature_key: str, job_id: str) -> JobResult:
                 if not await feature.relogin(user_id):
                     db.set_credential_state(user_id, feature_key,
                                             FeatureState.EXPIRED.value, "自动重登失败")
-                    return JobResult(False, "登录态失效且自动重登失败，请重新登录")
+                    return JobResult(
+                        False, "登录态失效且自动重登失败，账号或密码可能已变更，请重新登录")
             else:
                 db.set_credential_state(user_id, feature_key,
                                         FeatureState.EXPIRED.value, "登录态失效")
