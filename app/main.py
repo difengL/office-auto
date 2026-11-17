@@ -170,6 +170,7 @@ def feature_detail(key: str, user: db.User = Depends(web_auth.current_user)):
                  for j in f.default_jobs],
         "extra_options": [vars(x) for x in f.extra_options],
         "option_values": options_values,
+        "views": [vars(x) for x in f.views],
     }
 
 
@@ -253,3 +254,19 @@ def feature_runs(key: str, limit: int = 20,
                  user: db.User = Depends(web_auth.current_user)):
     _feature_or_404(key)
     return {"runs": db.read_job_runs(user.id, key, limit)}
+
+
+@app.get("/api/features/{key}/view/{view_id}")
+def feature_view(key: str, view_id: str, date: str = "",
+                 user: db.User = Depends(web_auth.current_user)):
+    """只读查看视图（推荐 / 可订菜品 / 订餐状态）。不产生副作用。"""
+    f = _feature_or_404(key)
+    if view_id not in {v.view_id for v in f.views}:
+        raise HTTPException(404, f"未知视图：{view_id}")
+    try:
+        data = asyncio.run(f.get_view(user.id, view_id, {"date": date}))
+    except FeatureLoginError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(400, f"{type(exc).__name__}: {exc}") from exc
+    return {"ok": True, "view_id": view_id, "data": data}

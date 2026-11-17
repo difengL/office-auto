@@ -7,7 +7,7 @@ from datetime import date, timedelta
 from app.core import db
 from app.core.feature import (CredentialKind, Feature, FeatureLoginError,
                               FeatureState, FieldSpec, JobContext, JobResult,
-                              JobSpec)
+                              JobSpec, ViewSpec)
 
 from . import jobs
 from .client import MeicanClient, MeicanError
@@ -33,6 +33,11 @@ class MeicanFeature(Feature):
         # 30 分钟一次，留足重试余量。
         JobSpec("keepalive", "登录保活", "interval", {"minutes": 30}, jitter=300,
                 editable=False, always_on=True),
+    ]
+    views = [
+        ViewSpec("status", "今日订餐状态", kind="status"),
+        ViewSpec("recommend", "按口味推荐", kind="recommend"),
+        ViewSpec("candidates", "当天可订菜品", kind="candidates"),
     ]
 
     async def login(self, user_id: int, payload: dict) -> dict:
@@ -155,3 +160,52 @@ class MeicanFeature(Feature):
             return result
 
         return JobResult(False, f"未知任务：{job_id}")
+
+    async def get_view(self, user_id: int, view_id: str, params: dict) -> dict:
+        cred = db.load_credential(user_id, self.key)
+        payload = cred.payload
+        if not payload.get("accessToken"):
+            raise FeatureLoginError("尚未登录，请先在上方登录")
+
+        # 日期参数：默认今天；订餐窗口内当天可订，也允许看明天
+        day_str = (params or {}).get("date") or date.today().isoformat()
+        try:
+            target = date.fromisoformat(day_str)
+        except ValueError:
+            raise FeatureLoginError(f"日期格式不正确：{day_str}")
+
+        cache = db.fdata_get(user_id, self.key, "restaurant_names", default={})
+        try:
+            if view_id == "status":
+                data = jobs.check_status(payload, target)
+                data.pop("raw_item", None)      # 原始报文太大，前端用不到
+                return data
+            if view_id == "recommend":
+                return jobs.recommend(payload, cache, target)
+            if view_id == "candidates":
+                return self._candidates_view(payload, target)
+        except MeicanError as exc:
+            raise FeatureLoginError(f"查询失败：{exc}") from exc
+        raise FeatureLoginError(f"未知视图：{view_id}")
+
+    @staticmethod
+    def _candidates_view(payload: dict, target: date) -> dict:
+        """当天可订的全部菜品（不排序、不限量），供用户浏览。"""
+        client = jobs._client(payload)
+        days = client.calendar_items(target, target, with_order=True)
+        if not days or not days[0].get("calendarItemList"):
+            return {"date": target.isoformat(), "error": "该日期没有可订餐次"}
+        item = jobs.find_meal_item(days[0]["calendarItemList"])
+        if not item:
+            return {"date": target.isoformat(), "error": "未找到餐次"}
+        cands = jobs.build_candidates(client, item, max_price=0)   # 0=不限价
+        return {
+            "date": target.isoformat(),
+            "title": item.get("title"),
+            "already_ordered": bool(item.get("corpOrderUser")),
+            "total_candidates": len(cands),
+            "candidates": [{
+                "restaurant_name": c.restaurant_name, "restaurant_id": c.restaurant_id,
+                "dish_id": c.dish_id, "dish_name": c.dish_name, "price": c.price,
+            } for c in cands],
+        }

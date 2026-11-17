@@ -64,6 +64,18 @@ class OptionSpec:
 
 
 @dataclass
+class ViewSpec:
+    """只读查看视图（如「今日推荐」「可订菜品」「是否已订」）。
+
+    与 run_job 的区别：view 不产生副作用、不记运行记录，纯粹给用户看。
+    kind 决定前端渲染方式：status | candidates | recommend。
+    """
+    view_id: str
+    name: str
+    kind: str = "status"
+
+
+@dataclass
 class JobResult:
     ok: bool
     message: str = ""
@@ -98,6 +110,7 @@ class Feature(ABC):
     credential_fields: list[FieldSpec] = []
     default_jobs: list[JobSpec] = []
     extra_options: list[OptionSpec] = []
+    views: list[ViewSpec] = []
     dry_run_default: bool = False
 
     @abstractmethod
@@ -131,6 +144,10 @@ class Feature(ABC):
     async def refresh_options(self, user_id: int) -> list[dict]:
         """刷新可选项（如下拉数据）。返回 [{"value":..., "label":...}]。"""
         return []
+
+    async def get_view(self, user_id: int, view_id: str, params: dict) -> dict:
+        """返回只读视图数据。默认无视图。params 可含 date 等查询条件。"""
+        raise FeatureLoginError(f"该功能没有查看视图：{view_id}")
 
     async def send_action(self, user_id: int, action: str, payload: dict) -> str:
         """执行登录前的辅助动作（如发送短信验证码）。
