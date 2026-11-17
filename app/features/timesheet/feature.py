@@ -89,10 +89,13 @@ class TimesheetFeature(Feature):
     async def refresh_options(self, user_id: int) -> list[dict]:
         cred = db.load_credential(user_id, self.key)
         p = cred.payload
-        client = HemClient(p.get("username", ""), p.get("password", ""))
-        try:
-            projects = client.list_projects()
-        except HemError as exc:
-            raise FeatureLoginError(f"拉取项目失败：{exc.message}") from exc
+        if not p.get("username") or not p.get("password"):
+            raise FeatureLoginError("尚未保存 HEM 账号密码，请先在上方登录")
+        with HemClient(p["username"], p["password"]) as client:
+            try:
+                client.login()          # 必须先登录，否则拿到的是登录页 HTML
+                projects = client.list_projects()
+            except HemError as exc:
+                raise FeatureLoginError(f"拉取项目失败：{exc.message}") from exc
         db.fdata_set(user_id, self.key, "projects", projects)
         return [{"value": x["project_id"], "label": x["name"]} for x in projects]
