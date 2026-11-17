@@ -72,7 +72,8 @@ let detail = null;
 function renderFields() {
   $('#fields').innerHTML = detail.credential_fields.map(f=>`
     <label>${f.label}</label>
-    <input data-field="${f.name}" type="${f.type==='password'?'password':'text'}">`).join('');
+    <input data-field="${f.name}" type="${f.type==='password'?'password':'text'}"
+           ${f.secret?'data-secret="1"':''}>`).join('');
 }
 
 function renderJobs() {
@@ -155,7 +156,10 @@ async function load() {
 
 $('#btnLogin').onclick = async () => {
   const payload = {};
-  document.querySelectorAll('[data-field]').forEach(i=>{ payload[i.dataset.field]=i.value.trim(); });
+  // 密码类字段原样提交，不 trim（首尾空格可能是密码的一部分）
+  document.querySelectorAll('[data-field]').forEach(i=>{
+    payload[i.dataset.field] = i.dataset.secret ? i.value : i.value.trim();
+  });
   $('#btnLogin').disabled = true;
   try {
     const d = await api(`/api/features/${KEY}/login`,{method:'POST',body:JSON.stringify(payload)});
