@@ -137,7 +137,8 @@ def features(user: db.User = Depends(web_auth.current_user)):
             "state": cred.state, "last_error": cred.last_error,
             "enabled": cfg.enabled,
             "dry_run": cfg.dry_run if saved else f.dry_run_default,
-            "display": cred.payload.get("userName") or cred.payload.get("username") or "",
+            "display": (cred.payload.get("userName") or cred.payload.get("username")
+                    or cred.payload.get("phone") or ""),
             "jobs": [{"job_id": j.job_id, "name": j.name,
                       "next_run": scheduler.next_run(user.id, f.key, j.job_id)}
                      for j in f.default_jobs],
@@ -161,7 +162,8 @@ def feature_detail(key: str, user: db.User = Depends(web_auth.current_user)):
         "credential_fields": [vars(x) for x in f.credential_fields],
         "state": cred.state, "last_error": cred.last_error,
         "last_ok_at": cred.last_ok_at,
-        "display": cred.payload.get("userName") or cred.payload.get("username") or "",
+        "display": (cred.payload.get("userName") or cred.payload.get("username")
+                    or cred.payload.get("phone") or ""),
         "config": {"enabled": cfg.enabled,
                    "dry_run": cfg.dry_run if saved else f.dry_run_default,
                    "schedule": cfg.schedule, "options": cfg.options},
@@ -252,8 +254,13 @@ def feature_run(key: str, body: RunBody,
 @app.get("/api/features/{key}/runs")
 def feature_runs(key: str, limit: int = 20,
                  user: db.User = Depends(web_auth.current_user)):
-    _feature_or_404(key)
-    return {"runs": db.read_job_runs(user.id, key, limit)}
+    f = _feature_or_404(key)
+    # 保活等常开任务是后台基础设施，不展示给用户；多取一些再过滤，
+    # 避免 limit 全被保活记录占满导致业务记录一条都看不到。
+    hidden = {j.job_id for j in f.default_jobs if j.always_on}
+    runs = [r for r in db.read_job_runs(user.id, key, limit * 5)
+            if r["job_id"] not in hidden]
+    return {"runs": runs[:limit]}
 
 
 @app.get("/api/features/{key}/view/{view_id}")

@@ -41,6 +41,17 @@
 
   <!-- ③ 仅登录后可见 -->
   <div id="authedArea" hidden>
+    <!-- 当日订餐状态：最显眼位置，登录后自动加载 -->
+    <div class="card today-card" id="todayCard" hidden>
+      <div class="today-head">
+        <h2>今日订餐</h2>
+        <span class="muted" id="todayDate"></span>
+        <div style="flex:1"></div>
+        <button class="ghost" id="btnRefreshToday" style="padding:6px 12px;font-size:13px">刷新</button>
+      </div>
+      <div id="todayBody" class="muted">加载中…</div>
+    </div>
+
     <div class="card">
       <h2>自动化设置</h2>
       <div class="switches">
@@ -210,23 +221,12 @@ function renderJobs() {
             </div>`;
   }).join('');
 
-  // 常开任务（登录保活）是基础设施，不受开关控制，单独说明而不是给开关
-  const always = detail.jobs.filter(j=>j.always_on);
-  const note = $('#alwaysOnNote');
-  if(always.length){
-    note.hidden = false;
-    note.innerHTML = always.map(j=>{
-      const cur = j.trigger==='interval'
-        ? `每 ${j.default?.minutes ?? 30} 分钟` : j.default?.hour??'';
-      const next = j.next_run ? `下次 ${j.next_run}` : '尚未排期';
-      return `<div><span class="dot"></span><b>${j.name}</b> 自动运行（${cur}），
-              用于保持登录状态，无需手动开启。${next}</div>`;
-    }).join('');
-  } else {
-    note.hidden = true;
-  }
+  // 保活是后台基础设施，对用户完全透明：不显示说明、不给按钮、不进记录。
+  // 它仍在后台自动运行，只是界面不打扰用户。
+  $('#alwaysOnNote').hidden = true;
 
-  $('#runButtons').innerHTML = detail.jobs.map(j=>
+  // 保活是后台基础设施，不给用户「立即执行」按钮
+  $('#runButtons').innerHTML = detail.jobs.filter(j=>!j.always_on).map(j=>
     `<button class="ghost" data-run="${j.job_id}">立即执行：${j.name}</button>`).join('');
   document.querySelectorAll('[data-run]').forEach(b=>{
     b.onclick = async () => {
@@ -326,8 +326,59 @@ async function load() {
   applyLayout(switching);
 
   renderFields(); renderJobs(); renderOptions(); renderViews();
-  if(isLoggedIn()) await loadRuns();
+  if(isLoggedIn()){ await loadRuns(); loadToday(); }
 }
+
+/* ---------- 今日订餐状态（最显眼位置） ---------- */
+function hasStatusView(){
+  return (detail.views||[]).some(v=>v.view_id==='status');
+}
+
+async function loadToday(){
+  const card = $('#todayCard');
+  if(!hasStatusView()){ card.hidden = true; return; }
+  card.hidden = false;
+  const today = new Date().toISOString().slice(0,10);
+  $('#todayDate').textContent = today;
+  const body = $('#todayBody');
+  body.innerHTML = '<span class="muted">加载中…</span>';
+  try {
+    const r = await api(`/api/features/${KEY}/view/status?date=${today}`);
+    body.innerHTML = renderToday(r.data);
+  } catch(e){
+    body.innerHTML = `<span class="err">${esc(e.message)}</span>`;
+  }
+}
+
+function renderToday(d){
+  if(!d.has_item) return '<div class="muted">今天没有可订餐次。</div>';
+  if(d.ordered){
+    const od = d.order_detail || {};
+    const dishes = (od.dishes||[]).map(x=>
+      `<span class="today-dish">${esc(x.name)}<em>¥${(x.price||0).toFixed(0)}</em></span>`).join('');
+    let extra = '';
+    if(od.postbox){
+      const pb = typeof od.postbox==='object'?od.postbox:{postboxCode:od.postbox};
+      if(pb.postboxCode){
+        let t = esc(pb.postboxCode);
+        if(pb.postboxOpenTime){
+          const dt=new Date(pb.postboxOpenTime);
+          t += ` · ${String(dt.getHours()).padStart(2,'0')}:${String(dt.getMinutes()).padStart(2,'0')} 开柜`;
+        }
+        extra += `<span class="today-meta">取餐柜 ${t}</span>`;
+      }
+    }
+    return `<div class="today-ordered">
+      <span class="today-badge ok">✓ 已订餐</span>
+      <div class="today-dishes">${dishes}</div>${extra}</div>`;
+  }
+  return `<div class="today-ordered">
+    <span class="today-badge warn">尚未订餐</span>
+    <span class="muted">${esc(d.title||'')} · 可在下方「按口味推荐」挑菜，或等定时任务自动订</span>
+  </div>`;
+}
+
+$('#btnRefreshToday').onclick = () => loadToday();
 
 /* ---------- 只读查看视图 ---------- */
 function renderViews(){
