@@ -22,18 +22,38 @@ class TimesheetFeature(Feature):
         FieldSpec("password", "HEM 密码", type="password", secret=True),
     ]
     default_jobs = [
+        # 周五下班前提交：太早当天的工时还没填，太晚跨了周末。20:00 留足
+        # 白天补填的余量，又赶在当天完成。
         JobSpec("weekly_submit", "提交周报", "cron",
-                {"hour": 17, "minute": 30, "day_of_week": "fri"}, jitter=300),
+                {"hour": 20, "minute": 0, "day_of_week": "fri"}, jitter=300),
         # 密码型凭据虽然能自动重登，但若密码被改/过期，只有到周五才发现
         # 就白丢一周工时。每天验一次，出问题当天就能看到。
         JobSpec("keepalive", "登录保活", "interval", {"hours": 24},
                 jitter=600, editable=False, always_on=True),
     ]
+    # 提交周报只在周五做才有意义，页面上不给「立即执行」入口，避免误触发
+    manual_run = False
     extra_options = [
         OptionSpec("project_id", "归属项目", type="select",
                    source="timesheet.projects", refreshable=True),
     ]
     dry_run_default = False
+
+    def migrate_config(self, cfg) -> bool:
+        """把旧的 17:30 默认时刻迁到 20:00。
+
+        老用户库里存着 {"weekly_submit": {"hour": 17, "minute": 30}}，
+        它会覆盖插件新的默认值，导致「默认 20:00」对老用户不生效。
+        只迁移恰好等于旧默认值的配置——用户如果自己改过别的时刻，
+        那是他的选择，不能动。
+        """
+        sub = cfg.schedule.get("weekly_submit") if cfg.schedule else None
+        if not sub:
+            return False
+        if sub.get("hour") == 17 and sub.get("minute") == 30:
+            sub.update({"hour": 20, "minute": 0})
+            return True
+        return False
 
     async def login(self, user_id: int, payload: dict) -> dict:
         username = (payload.get("username") or "").strip()

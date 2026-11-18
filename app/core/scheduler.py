@@ -14,6 +14,34 @@ from apscheduler.triggers.interval import IntervalTrigger
 
 from . import db, registry, runner
 
+_WEEKDAY_CN = {"mon": "周一", "tue": "周二", "wed": "周三", "thu": "周四",
+               "fri": "周五", "sat": "周六", "sun": "周日"}
+
+
+def day_label(day_of_week: str | None) -> str:
+    """把 cron 的 day_of_week 译成中文，供界面显示「每周五」这类文案。
+
+    只处理常见写法：单日、逗号列表、mon-fri、区间。认不出的原样返回，
+    宁可显示得生硬，也不要猜错用户配置。
+    """
+    if not day_of_week:
+        return ""
+    raw = str(day_of_week).strip().lower()
+    if raw in ("*", "?", "every"):
+        return "每天"
+    if raw == "mon-fri":
+        return "工作日"
+    parts = [p.strip() for p in raw.split(",") if p.strip()]
+    if parts and all(p in _WEEKDAY_CN for p in parts):
+        if len(parts) == 1:
+            return "每" + _WEEKDAY_CN[parts[0]]
+        return "每" + "、".join(_WEEKDAY_CN[p] for p in parts)
+    if len(parts) == 1 and "-" in parts[0]:
+        a, b = (x.strip() for x in parts[0].split("-", 1))
+        if a in _WEEKDAY_CN and b in _WEEKDAY_CN:
+            return f"每{_WEEKDAY_CN[a]}至{_WEEKDAY_CN[b]}"
+    return f"每 {day_of_week}"
+
 scheduler = AsyncIOScheduler(timezone="Asia/Shanghai",
                              job_defaults={"coalesce": True, "max_instances": 1,
                                            "misfire_grace_time": 900})
@@ -58,7 +86,7 @@ def reschedule_user(user_id: int) -> None:
             job.remove()
 
     for feature in registry.all():
-        cfg = db.load_feature_config(user_id, feature.key)
+        cfg = runner.load_config(user_id, feature)
         for spec in feature.default_jobs:
             # always_on 的任务不受总开关约束，其余必须 cfg.enabled
             if not (cfg.enabled or spec.always_on):

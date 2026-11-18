@@ -149,7 +149,7 @@ def features(user: db.User = Depends(web_auth.current_user)):
     out = []
     for f in registry.all():
         cred = db.load_credential(user.id, f.key)
-        cfg = db.load_feature_config(user.id, f.key)
+        cfg = runner.load_config(user.id, f)
         saved = db.fdata_get(user.id, f.key, "__config_saved__", default=False)
         out.append({
             "key": f.key, "name": f.name, "description": f.description,
@@ -175,7 +175,7 @@ def features(user: db.User = Depends(web_auth.current_user)):
 def feature_detail(key: str, user: db.User = Depends(web_auth.current_user)):
     f = _feature_or_404(key)
     cred = db.load_credential(user.id, key)
-    cfg = db.load_feature_config(user.id, key)
+    cfg = runner.load_config(user.id, f)
     saved = db.fdata_get(user.id, key, "__config_saved__", default=False)
     options_values = {}
     for spec in f.extra_options:
@@ -193,8 +193,13 @@ def feature_detail(key: str, user: db.User = Depends(web_auth.current_user)):
                    "dry_run": cfg.dry_run if saved else f.dry_run_default,
                    "schedule": cfg.schedule, "options": cfg.options},
         "jobs": [{**vars(j), "next_run": scheduler.next_run(user.id, key, j.job_id),
+                  # 星期以「默认 + 用户覆盖」合并后的值为准，与调度器一致
+                  "day_label": scheduler.day_label(
+                      {**(j.default or {}),
+                       **((cfg.schedule or {}).get(j.job_id) or {})}.get("day_of_week")),
                   "failures": db.consecutive_failures(user.id, key, j.job_id)}
                  for j in f.default_jobs],
+        "manual_run": f.manual_run,
         "extra_options": [vars(x) for x in f.extra_options],
         "option_values": options_values,
         "views": [vars(x) for x in f.views],
@@ -271,7 +276,10 @@ class RunBody(BaseModel):
 @app.post("/api/features/{key}/run")
 def feature_run(key: str, body: RunBody,
                 user: db.User = Depends(web_auth.current_user)):
-    _feature_or_404(key)
+    f = _feature_or_404(key)
+    # 界面上不给入口的功能，接口也一并挡住——否则「去掉立即执行」只是视觉上的
+    if not f.manual_run:
+        raise HTTPException(403, "该功能不支持手动执行，请等待定时触发")
     result = runner.execute(user.id, key, body.job_id)
     return {"ok": result.ok, "message": result.message, "detail": result.detail}
 

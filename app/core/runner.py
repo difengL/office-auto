@@ -20,6 +20,21 @@ def run_login(user_id: int, feature_key: str, payload: dict) -> dict:
     return info
 
 
+def load_config(user_id: int, feature):
+    """读取功能配置，并让插件修正其中已过时的值。
+
+    所有读取入口（页面、调度、执行）都要走这里：若只在执行时迁移，
+    用户打开页面看到的「下次执行」仍是旧时刻，会以为没改成功。
+    """
+    cfg = db.load_feature_config(user_id, feature.key)
+    try:
+        if feature.migrate_config(cfg):
+            db.save_feature_config(user_id, feature.key, cfg)
+    except Exception:  # noqa: BLE001 - 迁移失败不该拖垮主流程
+        pass
+    return cfg
+
+
 def execute(user_id: int, feature_key: str, job_id: str) -> JobResult:
     """执行一次任务。同步接口，内部用 asyncio.run 驱动插件协程。
 
@@ -49,7 +64,7 @@ def execute(user_id: int, feature_key: str, job_id: str) -> JobResult:
                                         FeatureState.EXPIRED.value, reason)
                 return JobResult(False, reason)
 
-        cfg = db.load_feature_config(user_id, feature_key)
+        cfg = load_config(user_id, feature)
         # 从未保存过配置时，dry_run 用插件声明的默认值
         if not db.fdata_get(user_id, feature_key, "__config_saved__", default=False):
             cfg.dry_run = feature.dry_run_default

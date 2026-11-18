@@ -201,14 +201,27 @@ function startCooldown(btn, seconds){
   }, 1000);
 }
 
+const pad2 = n => String(n ?? 0).padStart(2, '0');
+
+/* 定时任务的「什么时候跑」——周任务给「每周X + 时刻」，间隔任务给分钟数。
+   用户在界面上看到的就是人话，不需要理解 cron 表达式。 */
+function scheduleLabel(j, cur) {
+  if (j.trigger === 'interval') {
+    const n = cur.minutes ?? (cur.hours ? cur.hours * 60 : 30);
+    return n % 60 === 0 ? `每 ${n / 60} 小时` : `每 ${n} 分钟`;
+  }
+  const day = j.day_label || '';
+  return `${day} ${pad2(cur.hour ?? 9)}:${pad2(cur.minute ?? 0)}`.trim();
+}
+
 function renderJobs() {
   $('#jobTimes').innerHTML = detail.jobs.filter(j=>j.editable).map(j=>{
     const cur = (detail.config.schedule||{})[j.job_id] || j.default || {};
-    const txt = j.trigger==='cron'
-      ? `${String(cur.hour??9).padStart(2,'0')}:${String(cur.minute??0).padStart(2,'0')}`
-      : `每 ${cur.minutes??cur.hours??30} 分钟`;
-    return `<label>${j.name}（${j.trigger==='cron'?'时刻 HH:MM':'间隔'}）</label>
-            <input data-sched="${j.job_id}" value="${txt}">
+    // 日期由功能决定（周五提交周报不可能改成周三），用户只调时刻
+    const dayTag = j.day_label ? `<span class="badge">${j.day_label}</span>` : '';
+    const hint = j.trigger === 'cron' ? '时刻 HH:MM' : '间隔，如 360 分钟';
+    return `<label>${j.name} ${dayTag}（${hint}）</label>
+            <input data-sched="${j.job_id}" value="${scheduleLabel(j, cur)}">
             <div class="muted" style="font-size:12px;margin-top:4px">
               下次：${j.next_run||'未启用'}${j.failures>=3?` · <span class="err">连续失败 ${j.failures} 次</span>`:''}
             </div>`;
@@ -218,11 +231,10 @@ function renderJobs() {
   // 它仍在后台自动运行，只是界面不打扰用户。
   $('#alwaysOnNote').hidden = true;
 
-  // 保活是后台基础设施，不给用户「立即执行」按钮
-  // 有「今日订餐」模块的功能（美餐），订餐已整合进列表的逐条按钮，
-  // 不再单独显示「立即执行」卡；其他功能保留。
+  // 「立即执行」：有的功能不适合手动触发（如周五才该提交的周报），
+  // 有的已经把手动入口整合进业务列表（美餐的逐条订餐按钮）。
   const runnable = detail.jobs.filter(j=>!j.always_on);
-  $('#runCard').hidden = hasStatusView() || !runnable.length;
+  $('#runCard').hidden = !detail.manual_run || hasStatusView() || !runnable.length;
   $('#runButtons').innerHTML = runnable.map(j=>
     `<button class="ghost" data-run="${j.job_id}">立即执行：${j.name}</button>`).join('');
   document.querySelectorAll('[data-run]').forEach(b=>{
@@ -560,10 +572,15 @@ $('#btnLogin').onclick = async () => {
 };
 
 function parseTimeInput(text, prev) {
-  // 支持 "HH:MM" 或 "每 N 分钟"
-  const m = text.match(/每\s*(\d+)\s*分钟/);
-  if (m) return { minutes: parseInt(m[1], 10) };
-  const t = text.match(/(\d{1,2})\s*:\s*(\d{1,2})/);
+  // 用户可能写「每周五 20:00」「20:00」「每 30 分钟」「每 2 小时」，
+  // 也允许只改时刻不动星期——星期保存在 default 里，不在这里覆盖。
+  const h = text.match(/每\s*(\d+(?:\.\d+)?)\s*(小时|分钟)/);
+  if (h) {
+    const n = parseFloat(h[1]);
+    if (h[2] === '小时') return { minutes: Math.round(n * 60) };
+    return { minutes: Math.round(n) };
+  }
+  const t = text.match(/(\d{1,2})\s*[:：]\s*(\d{1,2})/);
   if (t) return { hour: parseInt(t[1], 10), minute: parseInt(t[2], 10) };
   return prev;
 }

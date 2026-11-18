@@ -112,6 +112,9 @@ class Feature(ABC):
     extra_options: list[OptionSpec] = []
     views: list[ViewSpec] = []
     dry_run_default: bool = False
+    # 是否在页面提供「立即执行」按钮。有些任务只在特定时点做才合理
+    # （如周五提交周报），给个按钮反而容易误触发，这类功能置 False。
+    manual_run: bool = True
 
     @abstractmethod
     async def login(self, user_id: int, payload: dict) -> dict:
@@ -163,3 +166,12 @@ class Feature(ABC):
         （如手机号）。返回给用户看的提示文案。
         """
         raise FeatureLoginError(f"不支持的操作：{action}")
+
+    def migrate_config(self, cfg) -> bool:
+        """修正已保存的配置，使其符合当前插件语义。返回是否有改动。
+
+        默认值变更后，老用户库里存的旧值会继续覆盖新默认值——这在
+        「默认时刻从 17:30 改成 20:00」这类调整时会让新默认形同虚设。
+        插件在这里说明怎么迁，core 只负责调用与落库。
+        """
+        return False
