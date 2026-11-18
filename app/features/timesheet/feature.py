@@ -33,7 +33,7 @@ class TimesheetFeature(Feature):
         OptionSpec("project_id", "归属项目", type="select",
                    source="timesheet.projects", refreshable=True),
     ]
-    dry_run_default = True
+    dry_run_default = False
 
     async def login(self, user_id: int, payload: dict) -> dict:
         username = (payload.get("username") or "").strip()
@@ -84,8 +84,9 @@ class TimesheetFeature(Feature):
             return JobResult(False, f"未知任务：{job_id}")
 
         project_id = ctx.options.get("project_id") or None
+        # 演练模式已移除：周报提交一律真实执行
         result = jobs.run_weekly_submit(
-            p["username"], p["password"], project_id, ctx.dry_run, date.today())
+            p["username"], p["password"], project_id, False, date.today())
 
         # 项目失效时回退默认并回写配置
         detail = result.detail or {}

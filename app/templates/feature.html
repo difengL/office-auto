@@ -63,9 +63,6 @@
         <label class="switch">
           <input type="checkbox" id="enabled"><span>启用定时任务</span>
         </label>
-        <label class="switch">
-          <input type="checkbox" id="dryRun"><span>演练模式（不真正提交）</span>
-        </label>
       </div>
       <div id="alwaysOnNote" class="note" hidden></div>
       <div id="jobTimes" class="fields" style="margin-top:18px"></div>
@@ -321,7 +318,6 @@ async function load() {
     ? '需要短信验证码 / 扫码，登录态失效后须重新登录'
     : '账号密码型，登录态失效会自动重登';
   $('#enabled').checked = !!detail.config.enabled;
-  $('#dryRun').checked = !!detail.config.dry_run;
   applyLayout(switching);
 
   renderFields(); renderJobs(); renderOptions();
@@ -524,7 +520,7 @@ $('#btnSave').onclick = async () => {
   const restore = withLoading($('#btnSave'), '保存中…');
   try {
     await api(`/api/features/${KEY}/config`, {method:'POST', body: JSON.stringify({
-      enabled: $('#enabled').checked, dry_run: $('#dryRun').checked, schedule, options
+      enabled: $('#enabled').checked, dry_run: false, schedule, options
     })});
     toast('设置已保存','ok');
     await load();

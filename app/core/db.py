@@ -145,6 +145,12 @@ CREATE TABLE IF NOT EXISTS job_runs (
   detail      TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS idx_job_runs ON job_runs(user_id, feature_key, id DESC);
+
+CREATE TABLE IF NOT EXISTS global_data (
+  key         TEXT PRIMARY KEY,
+  value       TEXT NOT NULL DEFAULT '',
+  updated_at  INTEGER NOT NULL DEFAULT 0
+);
 """
 
 
@@ -370,6 +376,28 @@ def fdata_set(user_id: int, feature_key: str, key: str, value) -> None:
             " value=excluded.value, updated_at=excluded.updated_at",
             (user_id, feature_key, key, json.dumps(value, ensure_ascii=False),
              int(time.time())))
+
+
+# ---------------- 全局共享 KV（跨用户） ----------------
+
+def gdata_get(key: str, default=None):
+    with conn() as c:
+        row = c.execute("SELECT value FROM global_data WHERE key=?", (key,)).fetchone()
+    if not row:
+        return default
+    try:
+        return json.loads(row["value"])
+    except ValueError:
+        return default
+
+
+def gdata_set(key: str, value) -> None:
+    with conn() as c:
+        c.execute(
+            "INSERT INTO global_data(key,value,updated_at) VALUES(?,?,?)"
+            " ON CONFLICT(key) DO UPDATE SET"
+            " value=excluded.value, updated_at=excluded.updated_at",
+            (key, json.dumps(value, ensure_ascii=False), int(time.time())))
 
 
 # ---------------- 运行记录 ----------------

@@ -52,26 +52,32 @@ def test_order_dish_calls_do_order_with_selected(monkeypatch):
     assert seen["dry_run"] is MeicanFeature.dry_run_default
 
 
-def test_order_dish_respects_saved_dry_run(monkeypatch):
+def test_order_dish_always_real_even_if_config_dry_run(monkeypatch):
+    """演练模式已移除：即便旧配置里 dry_run=True，订餐也真实执行。"""
     u = db.create_user("u2", "H", "U2")
     _login(u.id)
     db.save_feature_config(u.id, "meican",
                            db.FeatureConfig("meican", False, True, {}, {}))
     db.fdata_set(u.id, "meican", "__config_saved__", True)
     seen = {}
-    monkeypatch.setattr(jobs, "do_order",
-                        lambda p, c, t, d, dr: seen.update(dr=dr) or jobs.JobResult(True, "ok"))
 
+    def fake_do_order(p, c, t, d, dry_run):
+        seen["dr"] = dry_run
+        return jobs.JobResult(True, "ok")
+
+    monkeypatch.setattr(jobs, "do_order", fake_do_order)
     asyncio.run(MeicanFeature().do_action(u.id, "order_dish", {"dish": DISH}))
-    assert seen["dr"] is True
+    assert seen["dr"] is False
 
 
 def test_order_dish_records_run(monkeypatch):
     u = db.create_user("u3", "H", "U3")
     _login(u.id)
-    monkeypatch.setattr(jobs, "do_order",
-                        lambda p, c, t, d, dr: jobs.JobResult(True, "下单成功：烤鸭"))
 
+    def fake_do_order(p, c, t, d, dry_run):
+        return jobs.JobResult(True, "下单成功：烤鸭")
+
+    monkeypatch.setattr(jobs, "do_order", fake_do_order)
     asyncio.run(MeicanFeature().do_action(u.id, "order_dish", {"dish": DISH}))
     runs = db.read_job_runs(u.id, "meican")
     assert any(r["job_id"] == "order" and "烤鸭" in r["message"] for r in runs)

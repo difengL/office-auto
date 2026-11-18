@@ -126,6 +126,53 @@ def build_candidates(client: MeicanClient, item: dict, max_price: float) -> list
     return out
 
 
+# 当天可订菜品对所有同企业用户是固定的，拉一次全局共享缓存即可，
+# 不必每个用户、每次推荐都重新打几十次餐厅菜单接口。
+MENU_TTL = 6 * 3600        # 菜单缓存 6 小时（当天菜单基本不变）
+
+
+def _menu_cache_key(target_day: date, item: dict) -> str:
+    corp = (item.get("userTab") or {}).get("corp") or {}
+    ns = corp.get("namespace") or corp.get("uniqueId") or "default"
+    return f"meican:menu:{target_day.isoformat()}:{ns}:{_target_time_str(item)}"
+
+
+def get_candidates_cached(payload: dict, target_day: date,
+                          max_price: float = 0) -> tuple[list[DishCandidate], dict]:
+    """取当天可订菜品，优先用全局共享缓存。返回 (候选列表, 餐次item)。
+
+    缓存键含日期+企业namespace+餐次时间：同企业用户共享，不同企业互不干扰。
+    max_price 在缓存之上过滤（缓存存全量，限价各用户可能不同）。
+    """
+    from app.core import db
+    client = _client(payload)
+    days = client.calendar_items(target_day, target_day, with_order=True)
+    if not days or not days[0].get("calendarItemList"):
+        return [], {}
+    item = find_meal_item(days[0]["calendarItemList"])
+    if not item:
+        return [], {}
+
+    key = _menu_cache_key(target_day, item)
+    cached = db.gdata_get(key)
+    if cached and time.time() - cached.get("ts", 0) < MENU_TTL:
+        raw = cached["candidates"]
+    else:
+        full = build_candidates(client, item, max_price=0)   # 缓存存全量
+        raw = [{"restaurant_name": c.restaurant_name, "restaurant_id": c.restaurant_id,
+                "dish_id": c.dish_id, "dish_name": c.dish_name, "price": c.price}
+               for c in full]
+        db.gdata_set(key, {"ts": time.time(), "candidates": raw})
+
+    out = []
+    for c in raw:
+        if max_price and c["price"] > max_price:
+            continue
+        out.append(DishCandidate(c["restaurant_name"], c["restaurant_id"],
+                                 c["dish_id"], c["dish_name"], c["price"]))
+    return out, item
+
+
 def check_status(payload: dict, target_day: date) -> dict:
     client = _client(payload)
     days = client.calendar_items(target_day, target_day, with_order=True)
@@ -163,15 +210,10 @@ def _extract_order(item: dict) -> dict | None:
 
 def recommend(payload: dict, cache: dict, target_day: date, limit: int = 5,
               max_price: float = 25.0) -> dict:
-    client = _client(payload)
-    days = client.calendar_items(target_day, target_day, with_order=True)
-    if not days or not days[0].get("calendarItemList"):
-        return {"date": target_day.isoformat(), "error": "该日期没有可订餐次"}
-    item = find_meal_item(days[0]["calendarItemList"])
+    cands, item = get_candidates_cached(payload, target_day, max_price)
     if not item:
-        return {"date": target_day.isoformat(), "error": "未找到餐次"}
+        return {"date": target_day.isoformat(), "error": "该日期没有可订餐次"}
     model = PreferenceModel.from_history(fetch_history(payload, cache))
-    cands = build_candidates(client, item, max_price)
     top = rank_candidates(cands, target_day, model, limit=limit)
     return {
         "date": target_day.isoformat(),

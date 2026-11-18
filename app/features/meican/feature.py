@@ -169,7 +169,8 @@ class MeicanFeature(Feature):
             cache = jobs.load_cache(user_id)
             days = int(ctx.options.get("target_offset_days", 1))
             target = date.today() + timedelta(days=days)
-            result = jobs.do_order(payload, cache, target, None, ctx.dry_run)
+            # 演练模式已移除：定时订餐一律真实下单
+            result = jobs.do_order(payload, cache, target, None, dry_run=False)
             jobs.save_cache(user_id, cache)
             return result
 
@@ -192,12 +193,9 @@ class MeicanFeature(Feature):
         except ValueError:
             raise FeatureLoginError(f"日期格式不正确：{day_str}")
 
-        cfg = db.load_feature_config(user_id, self.key)
-        saved = db.fdata_get(user_id, self.key, "__config_saved__", default=False)
-        dry_run = cfg.dry_run if saved else self.dry_run_default
-
+        # 演练模式已移除：用户主动订餐一律真实下单
         cache = jobs.load_cache(user_id)
-        result = jobs.do_order(payload, cache, target, dish, dry_run)
+        result = jobs.do_order(payload, cache, target, dish, dry_run=False)
         jobs.save_cache(user_id, cache)
         # 用户主动订餐记一条运行记录，便于追溯
         db.record_job_run(user_id, self.key, "order", result.ok,
@@ -235,15 +233,10 @@ class MeicanFeature(Feature):
 
     @staticmethod
     def _candidates_view(payload: dict, target: date) -> dict:
-        """当天可订的全部菜品（不排序、不限量），供用户浏览。"""
-        client = jobs._client(payload)
-        days = client.calendar_items(target, target, with_order=True)
-        if not days or not days[0].get("calendarItemList"):
-            return {"date": target.isoformat(), "error": "该日期没有可订餐次"}
-        item = jobs.find_meal_item(days[0]["calendarItemList"])
+        """当天可订的全部菜品（不排序、不限量），供用户浏览。走全局共享缓存。"""
+        cands, item = jobs.get_candidates_cached(payload, target, max_price=0)
         if not item:
-            return {"date": target.isoformat(), "error": "未找到餐次"}
-        cands = jobs.build_candidates(client, item, max_price=0)   # 0=不限价
+            return {"date": target.isoformat(), "error": "该日期没有可订餐次"}
         return {
             "date": target.isoformat(),
             "title": item.get("title"),
