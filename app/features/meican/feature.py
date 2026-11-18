@@ -197,6 +197,12 @@ class MeicanFeature(Feature):
         # 演练模式已移除：用户主动订餐一律真实下单
         cache = jobs.load_cache(user_id)
         result = jobs.do_order(payload, cache, target, dish, dry_run=False)
+        # token 失效导致下单失败：有长期凭据就续期重试一次
+        if not result.ok and "token 已失效" in result.message:
+            if await self.relogin(user_id):
+                fresh = db.load_credential(user_id, self.key).payload
+                cache = jobs.load_cache(user_id)
+                result = jobs.do_order(fresh, cache, target, dish, dry_run=False)
         jobs.save_cache(user_id, cache)
         # 用户主动订餐记一条运行记录，便于追溯
         db.record_job_run(user_id, self.key, "order", result.ok,
@@ -216,23 +222,38 @@ class MeicanFeature(Feature):
         except ValueError:
             raise FeatureLoginError(f"日期格式不正确：{day_str}")
 
-        try:
+        if view_id not in {v.view_id for v in self.views}:
+            raise FeatureLoginError(f"未知视图：{view_id}")
+
+        def run_query(p: dict) -> dict:
             if view_id == "status":
-                data = jobs.check_status(payload, target)
+                data = jobs.check_status(p, target)
                 data.pop("raw_item", None)      # 原始报文太大，前端用不到
                 return data
             if view_id == "recommend":
                 cache = jobs.load_cache(user_id)
-                data = jobs.recommend(payload, cache, target)
+                data = jobs.recommend(p, cache, target)
                 jobs.save_cache(user_id, cache)   # 首次拉取的历史要落库
                 return data
             if view_id == "candidates":
-                return self._candidates_view(payload, target)
-            if view_id == "fruit":
-                return jobs.get_fruit_menu(payload, target)
+                return self._candidates_view(p, target)
+            return jobs.get_fruit_menu(p, target)   # fruit
+
+        try:
+            return run_query(payload)
         except MeicanError as exc:
-            raise FeatureLoginError(f"查询失败：{exc}") from exc
-        raise FeatureLoginError(f"未知视图：{view_id}")
+            # token 失效（401）：有长期凭据就自动续期重试一次，
+            # 不必让用户手动重新登录。其他错误直接抛出。
+            if exc.status != 401:
+                raise FeatureLoginError(f"查询失败：{exc}") from exc
+            if not await self.relogin(user_id):
+                raise FeatureLoginError(
+                    "登录态已失效且无法自动续期，请重新短信登录") from exc
+            fresh = db.load_credential(user_id, self.key).payload
+            try:
+                return run_query(fresh)
+            except MeicanError as exc2:
+                raise FeatureLoginError(f"查询失败：{exc2}") from exc2
 
     @staticmethod
     def _candidates_view(payload: dict, target: date) -> dict:

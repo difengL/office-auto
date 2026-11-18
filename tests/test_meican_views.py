@@ -119,7 +119,7 @@ def test_view_wraps_meican_error(monkeypatch):
     _login(u.id)
 
     def boom(p, d):
-        raise feat.MeicanError("token 已失效", 401)
+        raise feat.MeicanError("服务器内部错误", 500)   # 非 401，直接包装报错
 
     monkeypatch.setattr(feat.jobs, "check_status", boom)
     with pytest.raises(FeatureLoginError, match="查询失败"):
