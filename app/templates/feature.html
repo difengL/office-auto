@@ -330,7 +330,8 @@ function esc(s){ return String(s ?? '').replace(/[&<>"]/g,
 
 /* ---------- 今日订餐（状态 + 推荐/可订 + 逐条订餐，合并模块） ---------- */
 let mealTab = 'recommend';        // 当前列表页签
-let todayOrdered = false;         // 当天是否已订（决定是否显示订餐按钮）
+let todayOrdered = false;         // 当天是否已订（决定按钮是订餐还是更换）
+let orderedDishNames = [];        // 当前已订菜品名（列表里标「当前」）
 
 function hasStatusView(){
   return (detail.views||[]).some(v=>v.view_id==='status');
@@ -354,9 +355,11 @@ async function loadToday(){
   try {
     const r = await api(`/api/features/${KEY}/view/status?date=${d}`);
     todayOrdered = !!r.data.ordered;
+    // 记录当前已订菜品名，用于在列表里标「当前」
+    orderedDishNames = ((r.data.order_detail||{}).dishes||[]).map(x=>x.name);
     body.innerHTML = renderToday(r.data);
-    // 已订餐就不必再列菜单；未订才显示推荐/可订供挑选
-    if(r.data.has_item && !todayOrdered){
+    // 无论是否已订都展示菜单：未订显示「订餐」按钮，已订显示「更换」按钮
+    if(r.data.has_item){
       $('#mealTabs').hidden = false;
       loadMealList();
     }
@@ -458,36 +461,44 @@ function dishRow(c, withScore){
     const used = Math.max(0, c.dish_limit - c.available_count);
     quota = `<span class="quota${unavailable?' full':''}">已订 ${used}/${c.dish_limit}</span>`;
   }
-  // 当天未订才给「订餐」按钮；订满/打烊的餐厅置灰、按钮禁用
+  // 按钮：未订→「订餐」；已订→「更换」（当前已订的菜标「当前」且不可点）
+  const isCurrent = todayOrdered && orderedDishNames.includes(c.dish_name);
   let orderBtn = '';
-  if(!todayOrdered){
-    if(unavailable){
-      orderBtn = `<button class="order-btn" disabled title="该餐厅已订满或暂停营业">已订满</button>`;
-    } else {
-      orderBtn = `<button class="order-btn" data-dish='${esc(JSON.stringify({
-        dish_id:c.dish_id, dish_name:c.dish_name,
-        restaurant_id:c.restaurant_id, restaurant_name:c.restaurant_name,
-        price:c.price, available:true
-      }))}'>订餐</button>`;
-    }
+  if(isCurrent){
+    orderBtn = `<button class="order-btn current" disabled>当前</button>`;
+  } else if(unavailable){
+    orderBtn = `<button class="order-btn" disabled title="该餐厅已订满或暂停营业">已订满</button>`;
+  } else {
+    const act = todayOrdered ? 'change_order' : 'order_dish';
+    const label = todayOrdered ? '更换' : '订餐';
+    orderBtn = `<button class="order-btn" data-act="${act}" data-dish='${esc(JSON.stringify({
+      dish_id:c.dish_id, dish_name:c.dish_name,
+      restaurant_id:c.restaurant_id, restaurant_name:c.restaurant_name,
+      price:c.price, available:true
+    }))}'>${label}</button>`;
   }
-  return `<div class="dish${unavailable?' unavailable':''}">
+  return `<div class="dish${unavailable?' unavailable':''}${isCurrent?' current-dish':''}">
     <div class="dish-main"><span class="dish-name">${esc(c.dish_name)}</span>${score}</div>
     <span class="muted">${esc(c.restaurant_name)}${quota}</span>
     ${orderBtn}${reasons}</div>`;
 }
 
 function bindOrderButtons(){
-  document.querySelectorAll('.order-btn').forEach(b=>{
+  document.querySelectorAll('.order-btn[data-act]').forEach(b=>{
     b.onclick = async () => {
       const dish = JSON.parse(b.dataset.dish);
-      if(!confirm(`确认订「${dish.dish_name}」（${dish.restaurant_name}）？`)) return;
-      const restore = withLoading(b, '订餐中…');
+      const act = b.dataset.act;
+      const changing = act === 'change_order';
+      const msg = changing
+        ? `确认把今天的餐更换为「${dish.dish_name}」（${dish.restaurant_name}）？原订单将被取消。`
+        : `确认订「${dish.dish_name}」（${dish.restaurant_name}）？`;
+      if(!confirm(msg)) return;
+      const restore = withLoading(b, changing?'更换中…':'订餐中…');
       try {
-        const r = await api(`/api/features/${KEY}/do/order_dish`,
+        const r = await api(`/api/features/${KEY}/do/${act}`,
           {method:'POST', body: JSON.stringify({dish, date: viewDate()})});
-        toast(r.message || (r.ok?'已下单':'失败'), r.ok?'ok':'err');
-        await loadToday();          // 刷新状态：已订则收起列表
+        toast(r.message || (r.ok?'成功':'失败'), r.ok?'ok':'err');
+        await loadToday();          // 刷新状态与列表
         await loadRuns();
       } catch(e){ toast(e.message,'err'); restore(); }
     };

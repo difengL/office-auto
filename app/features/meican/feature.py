@@ -178,7 +178,7 @@ class MeicanFeature(Feature):
         return JobResult(False, f"未知任务：{job_id}")
 
     async def do_action(self, user_id: int, action: str, params: dict) -> JobResult:
-        if action != "order_dish":
+        if action not in ("order_dish", "change_order"):
             raise FeatureLoginError(f"不支持的操作：{action}")
         cred = db.load_credential(user_id, self.key)
         payload = cred.payload
@@ -194,17 +194,22 @@ class MeicanFeature(Feature):
         except ValueError:
             raise FeatureLoginError(f"日期格式不正确：{day_str}")
 
-        # 演练模式已移除：用户主动订餐一律真实下单
+        def run(p: dict, cache: dict) -> JobResult:
+            if action == "change_order":
+                return jobs.change_order(p, cache, target, dish)
+            return jobs.do_order(p, cache, target, dish, dry_run=False)
+
+        # 演练模式已移除：用户主动订餐/更换一律真实执行
         cache = jobs.load_cache(user_id)
-        result = jobs.do_order(payload, cache, target, dish, dry_run=False)
-        # token 失效导致下单失败：有长期凭据就续期重试一次
+        result = run(payload, cache)
+        # token 失效导致失败：有长期凭据就续期重试一次
         if not result.ok and "token 已失效" in result.message:
             if await self.relogin(user_id):
                 fresh = db.load_credential(user_id, self.key).payload
                 cache = jobs.load_cache(user_id)
-                result = jobs.do_order(fresh, cache, target, dish, dry_run=False)
+                result = run(fresh, cache)
         jobs.save_cache(user_id, cache)
-        # 用户主动订餐记一条运行记录，便于追溯
+        # 用户主动订餐/更换记一条运行记录，便于追溯
         db.record_job_run(user_id, self.key, "order", result.ok,
                           result.message, result.detail)
         return result

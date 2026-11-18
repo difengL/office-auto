@@ -107,14 +107,14 @@ def find_meal_item(items: list[dict]) -> dict | None:
 
 
 def _restaurant_available(r: dict) -> bool:
-    """餐厅是否可订。订满/打烊的餐厅在手机端显示灰色，不能列其菜品。
+    """餐厅是否可订（是否订满）。订满的餐厅在手机端显示灰色。
 
-    实测：不可订餐厅 open=false、availableDishCount=0、restaurantStatus=2；
-    正常餐厅 open=true、availableDishCount>0、restaurantStatus=0。
-    字段缺失时保守视为可订，只有明确不可订才过滤。
+    实测：订满餐厅 availableDishCount=0、restaurantStatus=2（如辣嘴鸭 60/0）；
+    正常餐厅 availableDishCount>0、restaurantStatus=0。
+    注意 open=false 只表示「当前不在营业时段」（如过了 16:00 订餐窗口），
+    不代表订满——此时 availableDishCount 仍 >0，不能据此判不可订。
+    字段缺失时保守视为可订。
     """
-    if r.get("open") is False:
-        return False
     if r.get("availableDishCount") == 0:
         return False
     if r.get("restaurantStatus") not in (None, 0):
@@ -304,6 +304,51 @@ def do_order(payload: dict, cache: dict, target_day: date,
     detail["response"] = res
     cache.setdefault("restaurant_names", {})[dish["restaurant_id"]] = dish["restaurant_name"]
     return JobResult(True, f"下单成功：{dish['restaurant_name']} / {dish['dish_name']}", detail)
+
+
+def change_order(payload: dict, cache: dict, target_day: date,
+                 dish: dict) -> JobResult:
+    """更换已订的餐：先取消旧订单，再下新单。
+
+    取消失败则不动（避免退了旧单又下不了新单导致没饭吃）；
+    取消成功但新单失败时如实告警，提示用户当前无订单。
+    """
+    if not dish.get("available", True):
+        return JobResult(False, f"「{dish.get('restaurant_name','该餐厅')}」已订满或暂停营业，无法更换")
+
+    status = check_status(payload, target_day)
+    if not status.get("has_item"):
+        return JobResult(False, f"{target_day} 没有可订餐次")
+    if not status.get("ordered"):
+        # 还没订过，直接下新单即可
+        return do_order(payload, cache, target_day, dish, dry_run=False)
+
+    client = _client(payload)
+    old_order = (status["raw_item"].get("corpOrderUser") or {})
+    old_id = old_order.get("uniqueId")
+    old_name = ""
+    for ri in old_order.get("restaurantItemList") or []:
+        for di in ri.get("dishItemList") or []:
+            old_name = (di.get("dish") or {}).get("name", "")
+            break
+        if old_name:
+            break
+
+    detail = {"date": target_day.isoformat(), "old_dish": old_name, "dish": dish}
+    if old_id:
+        try:
+            client.delete_order(old_id)
+        except MeicanError as exc:
+            return JobResult(False, f"取消原订单失败，未更换：{exc}", detail)
+
+    # 旧单已退，下新单
+    result = do_order(payload, cache, target_day, dish, dry_run=False)
+    result.detail = {**detail, **(result.detail or {})}
+    if result.ok:
+        result.message = f"已更换：{old_name or '原订单'} → {dish['restaurant_name']} / {dish['dish_name']}"
+    else:
+        result.message = f"原订单已取消，但新单下单失败：{result.message}（当前无订单，请重新订餐）"
+    return result
 
 
 def _resolve_address(client: MeicanClient, item: dict) -> str:

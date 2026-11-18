@@ -343,6 +343,15 @@ class MeicanClient:
         return payload
 
     def delete_order(self, order_unique_id: str) -> dict:
-        return self._v3_post("orders/delete",
-                             {"uniqueId": order_unique_id, "type": "CORP_ORDER",
-                              "restoreCart": "false"})
+        payload = self._v3_post("orders/delete",
+                                {"uniqueId": order_unique_id, "type": "CORP_ORDER",
+                                 "restoreCart": "false"})
+        inner = payload.get("data") or {}
+        ok = (payload.get("status") == "SUCCESSFUL"
+              or inner.get("status") == "SUCCESSFUL"
+              or payload.get("resultDescription") in ("SUCCESS", "SUCCESSFUL"))
+        if not ok:
+            msg = (payload.get("message") or inner.get("message")
+                   or payload.get("resultDescription") or "取消订单失败")
+            raise MeicanError(msg, payload=payload)
+        return payload

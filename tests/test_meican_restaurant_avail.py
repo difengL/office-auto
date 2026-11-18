@@ -77,6 +77,11 @@ def test_restaurant_available_helper():
     assert jobs._restaurant_available({"name": "x"}) is True
 
 
+def test_closed_but_has_quota_still_available():
+    # 过了订餐窗口 open=False，但仍有份数、status 正常 → 不算订满
+    assert jobs._restaurant_available(_rest("R", "金手勺", False, 56, 0)) is True
+
+
 # ---------- 下单拦截不可订 ----------
 
 @pytest.fixture(autouse=True)
