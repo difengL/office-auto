@@ -41,15 +41,20 @@
 
   <!-- ③ 仅登录后可见 -->
   <div id="authedArea" hidden>
-    <!-- 当日订餐状态：最显眼位置，登录后自动加载 -->
+    <!-- 今日订餐：状态 + 推荐/可订列表 + 逐条订餐，合并为一个模块 -->
     <div class="card today-card" id="todayCard" hidden>
       <div class="today-head">
         <h2>今日订餐</h2>
-        <span class="muted" id="todayDate"></span>
+        <input type="date" id="viewDate" style="width:auto">
         <div style="flex:1"></div>
         <button class="ghost" id="btnRefreshToday" style="padding:6px 12px;font-size:13px">刷新</button>
       </div>
       <div id="todayBody" class="muted">加载中…</div>
+      <div id="mealTabs" class="meal-tabs" hidden>
+        <button class="ghost tab active" data-tab="recommend">按口味推荐</button>
+        <button class="ghost tab" data-tab="candidates">当天可订菜品</button>
+      </div>
+      <div id="mealList"></div>
     </div>
 
     <div class="card">
@@ -70,17 +75,7 @@
       </div>
     </div>
 
-    <div class="card" id="viewsCard" hidden>
-      <h2>订餐查看</h2>
-      <div class="row" style="margin-bottom:14px">
-        <label style="margin:0">日期</label>
-        <input type="date" id="viewDate" style="width:auto">
-        <div class="row" id="viewButtons" style="flex:1"></div>
-      </div>
-      <div id="viewResult" class="muted">选择上方按钮查看</div>
-    </div>
-
-    <div class="card">
+    <div class="card" id="runCard">
       <h2>立即执行</h2>
       <div class="row" id="runButtons"></div>
     </div>
@@ -226,7 +221,11 @@ function renderJobs() {
   $('#alwaysOnNote').hidden = true;
 
   // 保活是后台基础设施，不给用户「立即执行」按钮
-  $('#runButtons').innerHTML = detail.jobs.filter(j=>!j.always_on).map(j=>
+  // 有「今日订餐」模块的功能（美餐），订餐已整合进列表的逐条按钮，
+  // 不再单独显示「立即执行」卡；其他功能保留。
+  const runnable = detail.jobs.filter(j=>!j.always_on);
+  $('#runCard').hidden = hasStatusView() || !runnable.length;
+  $('#runButtons').innerHTML = runnable.map(j=>
     `<button class="ghost" data-run="${j.job_id}">立即执行：${j.name}</button>`).join('');
   document.querySelectorAll('[data-run]').forEach(b=>{
     b.onclick = async () => {
@@ -325,33 +324,51 @@ async function load() {
   $('#dryRun').checked = !!detail.config.dry_run;
   applyLayout(switching);
 
-  renderFields(); renderJobs(); renderOptions(); renderViews();
+  renderFields(); renderJobs(); renderOptions();
   if(isLoggedIn()){ await loadRuns(); loadToday(); }
 }
 
-/* ---------- 今日订餐状态（最显眼位置） ---------- */
+function esc(s){ return String(s ?? '').replace(/[&<>"]/g,
+  c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+
+/* ---------- 今日订餐（状态 + 推荐/可订 + 逐条订餐，合并模块） ---------- */
+let mealTab = 'recommend';        // 当前列表页签
+let todayOrdered = false;         // 当天是否已订（决定是否显示订餐按钮）
+
 function hasStatusView(){
   return (detail.views||[]).some(v=>v.view_id==='status');
+}
+
+function viewDate(){
+  if(!$('#viewDate').value) $('#viewDate').value = new Date().toISOString().slice(0,10);
+  return $('#viewDate').value;
 }
 
 async function loadToday(){
   const card = $('#todayCard');
   if(!hasStatusView()){ card.hidden = true; return; }
   card.hidden = false;
-  const today = new Date().toISOString().slice(0,10);
-  $('#todayDate').textContent = today;
+  const d = viewDate();
   const body = $('#todayBody');
   body.innerHTML = '<span class="muted">加载中…</span>';
+  $('#mealTabs').hidden = true;
+  $('#mealList').innerHTML = '';
   try {
-    const r = await api(`/api/features/${KEY}/view/status?date=${today}`);
+    const r = await api(`/api/features/${KEY}/view/status?date=${d}`);
+    todayOrdered = !!r.data.ordered;
     body.innerHTML = renderToday(r.data);
+    // 已订餐就不必再列菜单；未订才显示推荐/可订供挑选
+    if(r.data.has_item && !todayOrdered){
+      $('#mealTabs').hidden = false;
+      loadMealList();
+    }
   } catch(e){
     body.innerHTML = `<span class="err">${esc(e.message)}</span>`;
   }
 }
 
 function renderToday(d){
-  if(!d.has_item) return '<div class="muted">今天没有可订餐次。</div>';
+  if(!d.has_item) return '<div class="muted">这一天没有可订餐次。</div>';
   if(d.ordered){
     const od = d.order_detail || {};
     const dishes = (od.dishes||[]).map(x=>
@@ -374,77 +391,28 @@ function renderToday(d){
   }
   return `<div class="today-ordered">
     <span class="today-badge warn">尚未订餐</span>
-    <span class="muted">${esc(d.title||'')} · 可在下方「按口味推荐」挑菜，或等定时任务自动订</span>
+    <span class="muted">${esc(d.title||'')} · 在下方挑一道菜点「订餐」，或等定时任务自动订</span>
   </div>`;
 }
 
-$('#btnRefreshToday').onclick = () => loadToday();
-
-/* ---------- 只读查看视图 ---------- */
-function renderViews(){
-  const views = detail.views || [];
-  const card = $('#viewsCard');
-  if(!views.length){ card.hidden = true; return; }
-  card.hidden = false;
-  if(!$('#viewDate').value) $('#viewDate').value = new Date().toISOString().slice(0,10);
-  $('#viewButtons').innerHTML = views.map(v=>
-    `<button class="ghost" data-view="${v.view_id}" data-kind="${v.kind}">${v.name}</button>`).join('');
-  document.querySelectorAll('[data-view]').forEach(b=>{
-    b.onclick = async () => {
-      const restore = withLoading(b);
-      const box = $('#viewResult');
-      box.innerHTML = '<span class="muted">查询中…</span>';
-      try {
-        const d = $('#viewDate').value;
-        const r = await api(`/api/features/${KEY}/view/${b.dataset.view}?date=${encodeURIComponent(d)}`);
-        box.innerHTML = renderViewData(b.dataset.kind, r.data);
-      } catch(e){ box.innerHTML = `<span class="err">${e.message}</span>`; }
-      finally { restore(); }
-    };
-  });
+async function loadMealList(){
+  const box = $('#mealList');
+  box.innerHTML = '<span class="muted">查询中…</span>';
+  try {
+    const r = await api(`/api/features/${KEY}/view/${mealTab}?date=${encodeURIComponent(viewDate())}`);
+    box.innerHTML = renderMealList(r.data);
+    bindOrderButtons();
+  } catch(e){ box.innerHTML = `<span class="err">${esc(e.message)}</span>`; }
 }
 
-function esc(s){ return String(s ?? '').replace(/[&<>"]/g,
-  c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
-
-function renderViewData(kind, d){
+function renderMealList(d){
   if(d.error) return `<span class="err">${esc(d.error)}</span>`;
-  if(kind === 'status') return renderStatus(d);
-  if(kind === 'recommend') return renderRecommend(d);
-  if(kind === 'candidates') return renderCandidates(d);
-  return `<pre>${esc(JSON.stringify(d,null,2))}</pre>`;
-}
-
-function renderStatus(d){
-  if(!d.has_item) return `<div class="muted">${esc(d.date)} 没有可订餐次。</div>`;
-  const badge = d.ordered
-    ? '<span class="badge on">已订餐</span>'
-    : '<span class="badge warn">未订餐</span>';
-  let html = `<div class="row" style="margin-bottom:10px">${badge}
-    <span class="muted">${esc(d.title||'')} · ${esc(d.date)}</span></div>`;
-  const od = d.order_detail;
-  if(d.ordered && od){
-    html += '<div class="dish-list">' + (od.dishes||[]).map(x=>
-      `<div class="dish"><span>${esc(x.name)}</span>
-       <span class="muted">×${x.count||1}</span>
-       <span class="price">¥${(x.price||0).toFixed(2)}</span></div>`).join('') + '</div>';
-    if(od.postbox){
-      const pb = typeof od.postbox==='object' ? od.postbox : {postboxCode:od.postbox};
-      let txt = esc(pb.postboxCode||'');
-      if(pb.postboxOpenTime){
-        const t = new Date(pb.postboxOpenTime);
-        txt += ` · ${String(t.getHours()).padStart(2,'0')}:${String(t.getMinutes()).padStart(2,'0')} 开柜`;
-      }
-      html += `<div class="kv"><span>取餐柜</span><span>${txt}</span></div>`;
-    }
-    if(od.address){
-      const ad = typeof od.address==='object' ? od.address : {address:od.address};
-      const txt = [ad.address, ad.pickUpLocation].filter(Boolean).map(esc).join(' · ');
-      if(txt) html += `<div class="kv"><span>地址</span><span>${txt}</span></div>`;
-    }
-  } else if(!d.ordered){
-    html += '<div class="muted">尚未下单。可在「按口味推荐」里挑菜，或等定时任务自动订。</div>';
-  }
+  let html = '';
+  if(mealTab==='recommend' && d.history_summary) html += renderHistorySummary(d.history_summary);
+  const cands = d.candidates || [];
+  if(!cands.length) return html + '<div class="muted">没有可订菜品。</div>';
+  html += `<div class="muted" style="margin-bottom:10px">共 ${d.total_candidates||cands.length} 道${mealTab==='recommend'?'推荐':''}</div>`;
+  html += '<div class="dish-list">' + cands.map(c=>dishRow(c, mealTab==='recommend')).join('') + '</div>';
   return html;
 }
 
@@ -453,22 +421,34 @@ function dishRow(c, withScore){
     ? `<span class="score">${c.score.toFixed(1)} 分</span>` : '';
   const reasons = withScore && (c.reasons||[]).length
     ? `<div class="muted reasons">${esc(c.reasons.join(' · '))}</div>` : '';
+  // 当天未订才给「订餐」按钮；把菜品信息存进 data 属性供点击时取用
+  const orderBtn = todayOrdered ? '' :
+    `<button class="order-btn" data-dish='${esc(JSON.stringify({
+      dish_id:c.dish_id, dish_name:c.dish_name,
+      restaurant_id:c.restaurant_id, restaurant_name:c.restaurant_name, price:c.price
+    }))}'>订餐</button>`;
   return `<div class="dish">
     <div class="dish-main"><span class="dish-name">${esc(c.dish_name)}</span>${score}</div>
     <span class="muted">${esc(c.restaurant_name)}</span>
     <span class="price">¥${(c.price||0).toFixed(2)}</span>
-    ${reasons}</div>`;
+    ${orderBtn}${reasons}</div>`;
 }
 
-function renderRecommend(d){
-  let html = `<div class="row" style="margin-bottom:10px">
-    <span class="muted">${esc(d.title||'')} · ${esc(d.date)}</span>
-    ${d.already_ordered?'<span class="badge on">已订餐</span>':''}
-    <span class="muted">共 ${d.total_candidates||0} 个候选</span></div>`;
-  if(d.history_summary) html += renderHistorySummary(d.history_summary);
-  if(!(d.candidates||[]).length) return html + '<div class="muted">没有符合条件的推荐。</div>';
-  html += '<div class="dish-list">' + d.candidates.map(c=>dishRow(c,true)).join('') + '</div>';
-  return html;
+function bindOrderButtons(){
+  document.querySelectorAll('.order-btn').forEach(b=>{
+    b.onclick = async () => {
+      const dish = JSON.parse(b.dataset.dish);
+      if(!confirm(`确认订「${dish.dish_name}」（${dish.restaurant_name}，¥${(dish.price||0).toFixed(0)}）？`)) return;
+      const restore = withLoading(b, '订餐中…');
+      try {
+        const r = await api(`/api/features/${KEY}/do/order_dish`,
+          {method:'POST', body: JSON.stringify({dish, date: viewDate()})});
+        toast(r.message || (r.ok?'已下单':'失败'), r.ok?'ok':'err');
+        await loadToday();          // 刷新状态：已订则收起列表
+        await loadRuns();
+      } catch(e){ toast(e.message,'err'); restore(); }
+    };
+  });
 }
 
 function renderHistorySummary(s){
@@ -483,15 +463,15 @@ function renderHistorySummary(s){
   return `<div class="muted" style="margin-bottom:10px">${parts.join(' · ')}</div>`;
 }
 
-function renderCandidates(d){
-  let html = `<div class="row" style="margin-bottom:10px">
-    <span class="muted">${esc(d.title||'')} · ${esc(d.date)}</span>
-    ${d.already_ordered?'<span class="badge on">已订餐</span>':''}
-    <span class="muted">共 ${d.total_candidates||0} 道菜</span></div>`;
-  if(!(d.candidates||[]).length) return html + '<div class="muted">当天没有可订菜品。</div>';
-  html += '<div class="dish-list">' + d.candidates.map(c=>dishRow(c,false)).join('') + '</div>';
-  return html;
-}
+$('#btnRefreshToday').onclick = () => loadToday();
+$('#viewDate').onchange = () => loadToday();
+document.querySelectorAll('[data-tab]').forEach(b=>{
+  b.onclick = () => {
+    mealTab = b.dataset.tab;
+    document.querySelectorAll('[data-tab]').forEach(x=>x.classList.toggle('active', x===b));
+    loadMealList();
+  };
+});
 
 /* 切换登录的临时状态 */
 let switching = false;

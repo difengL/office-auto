@@ -149,6 +149,13 @@ class Feature(ABC):
         """返回只读视图数据。默认无视图。params 可含 date 等查询条件。"""
         raise FeatureLoginError(f"该功能没有查看视图：{view_id}")
 
+    async def do_action(self, user_id: int, action: str, params: dict) -> JobResult:
+        """执行用户主动触发的动作（如「订这道菜」），区别于定时 run_job。
+
+        返回 JobResult；是否记运行记录由插件决定。默认不支持。
+        """
+        raise FeatureLoginError(f"该功能不支持操作：{action}")
+
     async def send_action(self, user_id: int, action: str, payload: dict) -> str:
         """执行登录前的辅助动作（如发送短信验证码）。
 

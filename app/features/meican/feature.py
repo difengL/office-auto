@@ -175,6 +175,35 @@ class MeicanFeature(Feature):
 
         return JobResult(False, f"未知任务：{job_id}")
 
+    async def do_action(self, user_id: int, action: str, params: dict) -> JobResult:
+        if action != "order_dish":
+            raise FeatureLoginError(f"不支持的操作：{action}")
+        cred = db.load_credential(user_id, self.key)
+        payload = cred.payload
+        if not payload.get("accessToken"):
+            raise FeatureLoginError("尚未登录，请先在上方登录")
+
+        dish = (params or {}).get("dish") or {}
+        if not dish.get("dish_id"):
+            raise FeatureLoginError("缺少菜品信息")
+        day_str = (params or {}).get("date") or date.today().isoformat()
+        try:
+            target = date.fromisoformat(day_str)
+        except ValueError:
+            raise FeatureLoginError(f"日期格式不正确：{day_str}")
+
+        cfg = db.load_feature_config(user_id, self.key)
+        saved = db.fdata_get(user_id, self.key, "__config_saved__", default=False)
+        dry_run = cfg.dry_run if saved else self.dry_run_default
+
+        cache = jobs.load_cache(user_id)
+        result = jobs.do_order(payload, cache, target, dish, dry_run)
+        jobs.save_cache(user_id, cache)
+        # 用户主动订餐记一条运行记录，便于追溯
+        db.record_job_run(user_id, self.key, "order", result.ok,
+                          result.message, result.detail)
+        return result
+
     async def get_view(self, user_id: int, view_id: str, params: dict) -> dict:
         cred = db.load_credential(user_id, self.key)
         payload = cred.payload

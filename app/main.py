@@ -251,6 +251,20 @@ def feature_run(key: str, body: RunBody,
     return {"ok": result.ok, "message": result.message, "detail": result.detail}
 
 
+@app.post("/api/features/{key}/do/{action}")
+def feature_do_action(key: str, action: str, body: dict,
+                      user: db.User = Depends(web_auth.current_user)):
+    """用户主动触发的动作，如美餐「订这道菜」。body 含 dish / date 等。"""
+    f = _feature_or_404(key)
+    try:
+        result = asyncio.run(f.do_action(user.id, action, body or {}))
+    except FeatureLoginError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(400, f"{type(exc).__name__}: {exc}") from exc
+    return {"ok": result.ok, "message": result.message, "detail": result.detail}
+
+
 @app.get("/api/features/{key}/runs")
 def feature_runs(key: str, limit: int = 20,
                  user: db.User = Depends(web_auth.current_user)):
