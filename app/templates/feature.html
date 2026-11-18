@@ -545,7 +545,12 @@ function dishRow(c, withScore){
   if(isCurrent){
     orderBtn = `<button class="order-btn current" disabled>当前</button>`;
   } else if(unavailable){
-    orderBtn = `<button class="order-btn" disabled title="该餐厅已订满或暂停营业">已订满</button>`;
+    // 两种原因分开显示，与美餐前端文案一致：
+    // sold_out=超过点餐限额，closed=餐厅已关闭点餐
+    const soldOut = c.unavailable_reason === 'sold_out';
+    const label = soldOut ? '已订满' : (c.unavailable_reason === 'closed' ? '已关闭' : '不可订');
+    const tip = soldOut ? '已超过餐厅的点餐限额' : '该餐厅当前已关闭点餐';
+    orderBtn = `<button class="order-btn" disabled title="${tip}">${label}</button>`;
   } else {
     const act = todayOrdered ? 'change_order' : 'order_dish';
     const label = todayOrdered ? '更换' : '订餐';

@@ -41,6 +41,11 @@ class DishCandidate:
     available: bool = True        # 餐厅是否可订（订满/打烊为 False，前端置灰）
     dish_limit: int | None = None      # 餐厅总份数上限
     available_count: int | None = None  # 剩余可订份数
+    # 不可订的具体原因，与美餐前端的两套文案一致：
+    #   sold_out → restaurant_status_exceed_limit「已超过餐厅的点餐限额」
+    #   closed   → restaurant_status_close「该餐厅已经关闭点餐」
+    # 空字符串表示可订。分开保存才能给出准确提示，而不是笼统说「订满」。
+    unavailable_reason: str = ""
 
 
 def _clean(name: str) -> str:

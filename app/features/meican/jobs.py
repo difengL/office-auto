@@ -106,23 +106,57 @@ def find_meal_item(items: list[dict]) -> dict | None:
     return items[0]
 
 
-def _restaurant_available(r: dict) -> bool:
-    """餐厅是否还能下单。判据只有一个：还有没有剩余份数。
+def restaurant_unavailable_reason(r: dict) -> str:
+    """餐厅为什么不能下单。返回 "" 表示可订。
 
-    实测三种组合：
-      - 营业时段内、有份数：open=true,  availableDishCount>0, status=0 → 可订
-      - 过了订餐窗口(16:00)：open=false, availableDishCount>0, status=1 → 仍可订
-      - 订满：               open=false, availableDishCount=0, status=2 → 不可订
+    依据美餐前端源码（demeter-fe/82b73ae.js: generateRestaurantSections）：
+        var e = !t.open,                    // isDisabled
+            a = t.availableDishCount <= 0;  // isDisabledByRestaurantCount
+    两处分别对应不同提示文案（afd1e10.js）：
+        isDisabledByRestaurantCount → restaurant_status_exceed_limit
+            「很抱歉，当前已超过餐厅的点餐限额」
+        isDisabled                 → restaurant_status_close
+            「很抱歉，该餐厅已经关闭点餐」
 
-    status=1/2 与 open=false 都只是「当前不在可下单时段」的侧面表现，
-    会随时间和时段整体变化；把它们当判据会在 16:00 后误把所有餐厅置灰。
-    唯一能区分「这家订满了」和「现在整体不接单」的，是剩余份数。
+    所以这是两个并列的原因，不能合并成一个布尔值——「份数用完」和
+    「不在供餐时段」对用户的含义不同，提示也该不同。
 
-    字段缺失时保守视为可订——宁可让用户点一下收到后端的明确报错，
-    也不要因为字段没返回就凭空置灰。
+    restaurantStatus 是总状态（1=关闭点餐, 2=超限），与上面两个标记
+    是一致的，但单看它无法区分原因，故仍以前端同源的 open/份数为主，
+    status 仅作兜底：万一 open/count 字段缺失但 status 明示不可订，
+    也不该放行。
     """
     avail = r.get("availableDishCount")
-    return avail is None or avail > 0
+    if avail is not None and avail <= 0:
+        return "sold_out"
+    if r.get("open") is False:
+        return "closed"
+    # 兜底：字段缺失但总状态明示不可订
+    status = r.get("restaurantStatus")
+    if status is not None and status not in (0,):
+        return "sold_out" if status == 2 else "closed"
+    return ""
+
+
+def _restaurant_available(r: dict) -> bool:
+    """餐厅是否还能下单。"""
+    return not restaurant_unavailable_reason(r)
+
+
+def unavailable_message(restaurant_name: str, reason: str) -> str:
+    """按不可订原因给出与美餐一致的提示。
+
+    文案对应美餐前端 i18n：
+      sold_out → restaurant_status_exceed_limit「已超过餐厅的点餐限额」
+      closed   → restaurant_status_close「该餐厅已经关闭点餐」
+    """
+    name = restaurant_name or "该餐厅"
+    if reason == "sold_out":
+        return f"「{name}」已超过点餐限额（订满），无法下单"
+    if reason == "closed":
+        return f"「{name}」当前已关闭点餐，无法下单"
+    # 原因缺失（如前端传来的是旧结构）：给出涵盖两种可能的中性说明
+    return f"「{name}」已订满或已关闭点餐，无法下单"
 
 
 def build_candidates(client: MeicanClient, item: dict, max_price: float) -> list[DishCandidate]:
@@ -130,7 +164,8 @@ def build_candidates(client: MeicanClient, item: dict, max_price: float) -> list
     tt = _target_time_str(item)
     out: list[DishCandidate] = []
     for r in client.restaurants(tab, tt):
-        avail = _restaurant_available(r)
+        reason = restaurant_unavailable_reason(r)
+        avail = not reason
         try:
             menu = client.restaurant_menu(r["uniqueId"], tab, tt)
         except MeicanError:
@@ -145,7 +180,8 @@ def build_candidates(client: MeicanClient, item: dict, max_price: float) -> list
                                      dish.get("id"), dish.get("name", ""), price,
                                      available=avail,
                                      dish_limit=r.get("dishLimit"),
-                                     available_count=r.get("availableDishCount")))
+                                     available_count=r.get("availableDishCount"),
+                                     unavailable_reason=reason))
     return out
 
 
@@ -164,7 +200,8 @@ def candidates_to_raw(cands: list[DishCandidate]) -> list[dict]:
     return [{"restaurant_name": c.restaurant_name, "restaurant_id": c.restaurant_id,
              "dish_id": c.dish_id, "dish_name": c.dish_name, "price": c.price,
              "available": c.available, "dish_limit": c.dish_limit,
-             "available_count": c.available_count}
+             "available_count": c.available_count,
+             "unavailable_reason": c.unavailable_reason}
             for c in cands]
 
 
@@ -226,7 +263,8 @@ def get_candidates_cached(payload: dict, target_day: date,
                                  c["dish_id"], c["dish_name"], c["price"],
                                  available=c.get("available", True),
                                  dish_limit=c.get("dish_limit"),
-                                 available_count=c.get("available_count")))
+                                 available_count=c.get("available_count"),
+                                 unavailable_reason=c.get("unavailable_reason", "")))
     return out, item
 
 
@@ -286,6 +324,7 @@ def recommend(payload: dict, cache: dict, target_day: date, limit: int = 5,
             "price": c.price, "score": c.score, "reasons": c.reasons,
             "available": c.available,
             "dish_limit": c.dish_limit, "available_count": c.available_count,
+            "unavailable_reason": c.unavailable_reason,
         } for c in top],
         "total_candidates": len(cands),
     }
@@ -312,7 +351,8 @@ def do_order(payload: dict, cache: dict, target_day: date,
         dish = avail[0]
 
     if not dish.get("available", True):
-        return JobResult(False, f"「{dish.get('restaurant_name','该餐厅')}」已订满或暂停营业，无法下单")
+        return JobResult(False, unavailable_message(dish.get("restaurant_name", ""),
+                                                    dish.get("unavailable_reason", "")))
 
     detail = {"date": target_day.isoformat(), "dish": dish, "dry_run": dry_run}
     if dry_run:
@@ -346,7 +386,8 @@ def change_order(payload: dict, cache: dict, target_day: date,
     取消成功但新单失败时如实告警，提示用户当前无订单。
     """
     if not dish.get("available", True):
-        return JobResult(False, f"「{dish.get('restaurant_name','该餐厅')}」已订满或暂停营业，无法更换")
+        return JobResult(False, unavailable_message(dish.get("restaurant_name", ""),
+                                                    dish.get("unavailable_reason", "")))
 
     status = check_status(payload, target_day)
     if not status.get("has_item"):

@@ -77,33 +77,55 @@ def test_restaurant_available_helper():
     assert jobs._restaurant_available({"name": "x"}) is True
 
 
-def test_closed_but_has_quota_still_available():
-    # 过了订餐窗口 open=False，但仍有份数、status 正常 → 不算订满
-    assert jobs._restaurant_available(_rest("R", "金手勺", False, 56, 0)) is True
+def test_closed_is_unavailable_even_with_quota():
+    """过了供餐时段 open=false，即便还有份数也不能下单。
 
-
-def test_after_window_status1_still_available():
-    """回归：19:56 实测所有餐厅 open=false、status=1、份数 17~56，却全被置灰。
-
-    status=1 表示「当前不在可下单时段」，会随时段整体翻转，
-    不能当成「这家订满了」。判据只能是剩余份数。
+    依据美餐前端 generateRestaurantSections：isDisabled = !t.open，
+    与份数判据并列。两处触发不同文案，但都不可订。
     """
-    assert jobs._restaurant_available(_rest("R", "金手勺", False, 41, 1)) is True
-    assert jobs._restaurant_available(_rest("R", "切果NOW", False, 39, 1)) is True
-    assert jobs._restaurant_available(_rest("R", "湘行记", False, 17, 1)) is True
+    assert jobs._restaurant_available(_rest("R", "金手勺", False, 56, 0)) is False
+    assert jobs.restaurant_unavailable_reason(_rest("R", "金手勺", False, 56, 0)) == "closed"
 
 
-def test_only_zero_quota_is_unavailable():
-    """无论 status/open 怎么组合，只有份数为 0 才是不可订。"""
-    for status in (0, 1, 2):
-        for open_ in (True, False):
-            assert jobs._restaurant_available(_rest("R", "x", open_, 5, status)) is True
-            assert jobs._restaurant_available(_rest("R", "x", open_, 0, status)) is False
+def test_sold_out_takes_precedence_over_closed():
+    """份数与关闭同时成立时，报「超限」——与前端先判 count 的顺序一致。"""
+    r = _rest("R", "辣嘴鸭", False, 0, 2)
+    assert jobs.restaurant_unavailable_reason(r) == "sold_out"
 
 
-def test_missing_quota_field_treated_available():
-    """字段没返回时不能凭空空置灰。"""
-    assert jobs._restaurant_available({"name": "x", "restaurantStatus": 2}) is True
+def test_reason_distinguishes_two_causes():
+    """两个原因必须分开——前端 i18n 是两套文案。"""
+    assert jobs.restaurant_unavailable_reason(_rest("R", "x", True, 0, 0)) == "sold_out"
+    assert jobs.restaurant_unavailable_reason(_rest("R", "x", False, 10, 1)) == "closed"
+    assert jobs.restaurant_unavailable_reason(_rest("R", "x", True, 10, 0)) == ""
+
+
+def test_status_alone_can_block_when_fields_missing():
+    """open/份数缺失但总状态明示不可订时，不能放行。"""
+    assert jobs._restaurant_available({"name": "x", "restaurantStatus": 2}) is False
+    assert jobs._restaurant_available({"name": "x", "restaurantStatus": 1}) is False
+    assert jobs._restaurant_available({"name": "x", "restaurantStatus": 0}) is True
+
+
+def test_missing_all_status_fields_treated_available():
+    """所有状态字段都没返回时保守视为可订，让后端给明确报错。"""
+    assert jobs._restaurant_available({"name": "x"}) is True
+
+
+def test_build_candidates_carries_reason():
+    c = FakeClient([_rest("R1", "辣嘴鸭", open_=False, avail=0, status=2),
+                    _rest("R2", "某店", open_=False, avail=30, status=1),
+                    _rest("R3", "金手勺", open_=True, avail=40, status=0)],
+                   {"R1": MENU, "R2": MENU, "R3": MENU})
+    got = {x.restaurant_name: x.unavailable_reason
+           for x in jobs.build_candidates(c, ITEM, max_price=0)}
+    assert got == {"辣嘴鸭": "sold_out", "某店": "closed", "金手勺": ""}
+
+
+def test_unavailable_message_matches_mealican_wording():
+    assert "限额" in jobs.unavailable_message("辣嘴鸭", "sold_out")
+    assert "关闭点餐" in jobs.unavailable_message("某店", "closed")
+    assert "无法下单" in jobs.unavailable_message("某店", "")
 
 
 # ---------- 下单拦截不可订 ----------

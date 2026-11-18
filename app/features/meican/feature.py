@@ -281,6 +281,7 @@ class MeicanFeature(Feature):
                 "dish_id": c.dish_id, "dish_name": c.dish_name, "price": c.price,
                 "available": c.available,
                 "dish_limit": c.dish_limit, "available_count": c.available_count,
+                "unavailable_reason": c.unavailable_reason,
             } for c in cands],
         }
 
