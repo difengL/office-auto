@@ -452,6 +452,12 @@ function dishRow(c, withScore){
   const reasons = withScore && (c.reasons||[]).length
     ? `<div class="muted reasons">${esc(c.reasons.join(' · '))}</div>` : '';
   const unavailable = c.available === false;
+  // 份数：已订 = 总上限 - 剩余可用
+  let quota = '';
+  if(c.dish_limit != null && c.available_count != null){
+    const used = Math.max(0, c.dish_limit - c.available_count);
+    quota = `<span class="quota${unavailable?' full':''}">已订 ${used}/${c.dish_limit}</span>`;
+  }
   // 当天未订才给「订餐」按钮；订满/打烊的餐厅置灰、按钮禁用
   let orderBtn = '';
   if(!todayOrdered){
@@ -467,7 +473,7 @@ function dishRow(c, withScore){
   }
   return `<div class="dish${unavailable?' unavailable':''}">
     <div class="dish-main"><span class="dish-name">${esc(c.dish_name)}</span>${score}</div>
-    <span class="muted">${esc(c.restaurant_name)}${unavailable?' · 已订满':''}</span>
+    <span class="muted">${esc(c.restaurant_name)}${quota}</span>
     ${orderBtn}${reasons}</div>`;
 }
 

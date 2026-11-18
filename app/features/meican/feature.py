@@ -270,5 +270,6 @@ class MeicanFeature(Feature):
                 "restaurant_name": c.restaurant_name, "restaurant_id": c.restaurant_id,
                 "dish_id": c.dish_id, "dish_name": c.dish_name, "price": c.price,
                 "available": c.available,
+                "dish_limit": c.dish_limit, "available_count": c.available_count,
             } for c in cands],
         }

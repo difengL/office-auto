@@ -39,6 +39,8 @@ class DishCandidate:
     score: float = 0.0
     reasons: list[str] = field(default_factory=list)
     available: bool = True        # 餐厅是否可订（订满/打烊为 False，前端置灰）
+    dish_limit: int | None = None      # 餐厅总份数上限
+    available_count: int | None = None  # 剩余可订份数
 
 
 def _clean(name: str) -> str:

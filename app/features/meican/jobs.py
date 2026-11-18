@@ -140,7 +140,9 @@ def build_candidates(client: MeicanClient, item: dict, max_price: float) -> list
                 continue
             out.append(DishCandidate(r.get("name", ""), r.get("uniqueId", ""),
                                      dish.get("id"), dish.get("name", ""), price,
-                                     available=avail))
+                                     available=avail,
+                                     dish_limit=r.get("dishLimit"),
+                                     available_count=r.get("availableDishCount")))
     return out
 
 
@@ -179,7 +181,8 @@ def get_candidates_cached(payload: dict, target_day: date,
         full = build_candidates(client, item, max_price=0)   # 缓存存全量
         raw = [{"restaurant_name": c.restaurant_name, "restaurant_id": c.restaurant_id,
                 "dish_id": c.dish_id, "dish_name": c.dish_name, "price": c.price,
-                "available": c.available}
+                "available": c.available, "dish_limit": c.dish_limit,
+                "available_count": c.available_count}
                for c in full]
         db.gdata_set(key, {"ts": time.time(), "candidates": raw})
 
@@ -189,7 +192,9 @@ def get_candidates_cached(payload: dict, target_day: date,
             continue
         out.append(DishCandidate(c["restaurant_name"], c["restaurant_id"],
                                  c["dish_id"], c["dish_name"], c["price"],
-                                 available=c.get("available", True)))
+                                 available=c.get("available", True),
+                                 dish_limit=c.get("dish_limit"),
+                                 available_count=c.get("available_count")))
     return out, item
 
 
@@ -248,6 +253,7 @@ def recommend(payload: dict, cache: dict, target_day: date, limit: int = 5,
             "dish_id": c.dish_id, "dish_name": c.dish_name,
             "price": c.price, "score": c.score, "reasons": c.reasons,
             "available": c.available,
+            "dish_limit": c.dish_limit, "available_count": c.available_count,
         } for c in top],
         "total_candidates": len(cands),
     }
