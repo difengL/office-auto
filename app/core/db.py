@@ -154,9 +154,205 @@ CREATE TABLE IF NOT EXISTS global_data (
 """
 
 
-def init_db() -> None:
+# 结构版本：改了 SCHEMA 就 +1。只作对账记录，实际修复靠下方的
+# 声明式 diff（DDL 是唯一真相），不依赖有序迁移脚本。
+SCHEMA_VERSION = 1
+
+
+@dataclass
+class ColumnSpec:
+    name: str
+    type: str
+    notnull: bool
+    default: str | None
+    pk: bool
+
+
+@dataclass
+class SchemaReport:
+    """启动自检结果。有改动才逐条列出，正常时只有一行「校验通过」。"""
+    db_created: bool = False
+    created_tables: list[str] = field(default_factory=list)
+    added_columns: list[str] = field(default_factory=list)     # "表.字段"
+    extra_columns: list[str] = field(default_factory=list)     # 库里有、代码没有
+    type_mismatches: list[str] = field(default_factory=list)   # 类型对不上
+    problems: list[str] = field(default_factory=list)          # 无法自动修复
+    version: int = SCHEMA_VERSION
+    seeded: list[str] = field(default_factory=list)            # 初始化数据
+
+    @property
+    def changed(self) -> bool:
+        return bool(self.created_tables or self.added_columns or self.db_created)
+
+    def lines(self) -> list[str]:
+        out = []
+        if self.db_created:
+            out.append(f"数据库不存在，已新建：{DB_PATH}")
+        if self.created_tables:
+            out.append("新建表：" + "、".join(self.created_tables))
+        if self.added_columns:
+            out.append("补齐字段：" + "、".join(self.added_columns))
+        if self.extra_columns:
+            out.append("⚠ 库中多出字段（代码未使用，保守起见未删除）："
+                       + "、".join(self.extra_columns))
+        if self.type_mismatches:
+            out.append("⚠ 字段类型与代码定义不一致（未自动改，请人工确认）："
+                       + "、".join(self.type_mismatches))
+        if self.problems:
+            out.extend("⚠ " + p for p in self.problems)
+        if self.seeded:
+            out.extend(self.seeded)
+        if (not self.changed and not self.extra_columns
+                and not self.type_mismatches and not self.problems):
+            out.append(f"表结构校验通过，无需变更（schema v{self.version}）")
+        return out
+
+
+# SQLite 的类型松散，INT/INTEGER、VARCHAR/TEXT 等价。按亲和性归并，
+# 避免把兼容写法误报成「结构不一致」。
+_TYPE_FAMILY = {
+    "INT": "INTEGER", "INTEGER": "INTEGER", "TINYINT": "INTEGER",
+    "SMALLINT": "INTEGER", "MEDIUMINT": "INTEGER", "BIGINT": "INTEGER",
+    "UNSIGNED BIG INT": "INTEGER",
+    "TEXT": "TEXT", "VARCHAR": "TEXT", "CHAR": "TEXT", "CLOB": "TEXT",
+    "REAL": "REAL", "FLOAT": "REAL", "DOUBLE": "REAL", "NUMERIC": "REAL",
+    "DECIMAL": "REAL",
+    "BLOB": "BLOB", "": "BLOB",
+}
+
+
+def _type_family(t: str | None) -> str:
+    base = (t or "").upper().split("(")[0].strip()
+    return _TYPE_FAMILY.get(base, base)
+
+
+def _quote(name: str) -> str:
+    return '"' + name.replace('"', '""') + '"'
+
+
+def _table_names(c: sqlite3.Connection) -> list[str]:
+    return [r[0] for r in c.execute(
+        "SELECT name FROM sqlite_master WHERE type='table'"
+        " AND name NOT LIKE 'sqlite_%' ORDER BY name")]
+
+
+def _read_columns(c: sqlite3.Connection, table: str) -> dict[str, ColumnSpec]:
+    rows = c.execute(f"PRAGMA table_info({_quote(table)})").fetchall()
+    return {r[1]: ColumnSpec(r[1], (r[2] or "").upper(), bool(r[3]), r[4], bool(r[5]))
+            for r in rows}
+
+
+def expected_schema() -> dict[str, dict[str, ColumnSpec]]:
+    """在内存库里跑一遍 SCHEMA，得到「应该有」的结构。
+
+    以 DDL 文本为唯一真相，不手写第二份字段清单——那样迟早漂移。
+    """
+    mem = sqlite3.connect(":memory:")
+    try:
+        mem.executescript(SCHEMA)
+        return {t: _read_columns(mem, t) for t in _table_names(mem)}
+    finally:
+        mem.close()
+
+
+def _add_column_ddl(table: str, col: ColumnSpec) -> str:
+    """生成补列语句。
+
+    SQLite 的 ADD COLUMN 有个硬限制：NOT NULL 必须带默认值。老库缺的
+    若是 NOT NULL 且 DDL 没写默认值的字段，用类型零值兜底，保证已有
+    数据行仍可读——宁可结构略有偏差，也不能让迁移失败。
+    """
+    ctype = col.type or "TEXT"
+    default = col.default
+    if col.notnull and default is None:
+        default = "''" if _type_family(ctype) == "TEXT" else "0"
+    sql = f"ALTER TABLE {_quote(table)} ADD COLUMN {_quote(col.name)} {ctype}"
+    if default is not None:
+        sql += f" DEFAULT {default}"
+    if col.notnull:
+        sql += " NOT NULL"
+    return sql
+
+
+def init_db() -> SchemaReport:
+    """建库 + 结构对账。幂等，每次启动都该调用。
+
+    做三件事：
+    1. 缺失的表/索引直接建（CREATE TABLE IF NOT EXISTS）
+    2. 已有表缺字段 → ALTER TABLE ADD COLUMN 自动补齐
+    3. 多余字段、类型不一致 → 只报告不改（可能是代码回滚，删列会丢数据）
+    """
+    report = SchemaReport()
+    report.db_created = not DB_PATH.exists()
+    expected = expected_schema()
+
     with conn() as c:
+        if not report.db_created and DB_PATH.stat().st_size == 0:
+            report.db_created = True
+        before_tables = _table_names(c)
+        before_cols = {t: _read_columns(c, t) for t in before_tables}
+        old_version = c.execute("PRAGMA user_version").fetchone()[0]
+
+        # 1) 建缺失的表与索引
         c.executescript(SCHEMA)
+        report.created_tables = [t for t in expected if t not in before_tables]
+
+        # 2) 补缺失字段
+        for table, cols in expected.items():
+            actual = _read_columns(c, table)
+            for name, spec in cols.items():
+                if name in actual:
+                    continue
+                if spec.pk:
+                    # 主键无法后补，只能人工重建表
+                    report.problems.append(
+                        f"{table}.{name} 是主键但库中缺失，SQLite 无法补主键，请人工重建表")
+                    continue
+                c.execute(_add_column_ddl(table, spec))
+                report.added_columns.append(f"{table}.{name}")
+
+        # 3) 对账：多余字段 / 类型不一致
+        for table, cols in expected.items():
+            actual = _read_columns(c, table)
+            for name, spec in actual.items():
+                if name not in cols:
+                    report.extra_columns.append(f"{table}.{name}")
+                elif _type_family(spec.type) != _type_family(cols[name].type):
+                    report.type_mismatches.append(
+                        f"{table}.{name}（库 {spec.type} / 代码 {cols[name].type}）")
+
+        # 版本只进不退：代码回滚时不把新库降级标记
+        c.execute(f"PRAGMA user_version = {max(old_version, SCHEMA_VERSION)}")
+        report.version = max(old_version, SCHEMA_VERSION)
+    return report
+
+
+def seed_initial_data() -> list[str]:
+    """新环境首次启动的初始化数据。
+
+    只处理一件事：库里一个用户都没有时，按环境变量引导创建管理员。
+    没设 ADMIN_USERNAME/ADMIN_PASSWORD 就什么都不做——常规流程仍是
+    在登录页自助注册，这里只是让「ALLOW_REGISTER=0 的部署」也能进得去。
+    幂等：已有用户则直接跳过。
+    """
+    if count_users() > 0:
+        return []
+
+    username = (os.environ.get("ADMIN_USERNAME") or "").strip()
+    password = os.environ.get("ADMIN_PASSWORD") or ""
+    if not username or not password:
+        if os.environ.get("ALLOW_REGISTER", "1") == "0":
+            return ["⚠ 当前无任何用户且 ALLOW_REGISTER=0：无人能登录。"
+                    "请设置 ADMIN_USERNAME / ADMIN_PASSWORD 后重启。"]
+        return []
+
+    from . import security          # 延迟导入，避免模块循环依赖
+    if len(username) < 2 or len(password) < 6:
+        return ["⚠ ADMIN_USERNAME 至少 2 位、ADMIN_PASSWORD 至少 6 位，已跳过管理员创建。"]
+    if get_user_by_username(username):
+        return []
+    create_user(username, security.hash_password(password), username)
+    return [f"已按环境变量创建管理员账号：{username}"]
 
 
 # ---------------- 用户 ----------------

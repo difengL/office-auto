@@ -118,3 +118,19 @@ def start() -> None:
         scheduler.state = STATE_STOPPED
     if not scheduler.running:
         scheduler.start()
+
+
+def stop() -> None:
+    """停机时释放调度器。
+
+    AsyncIOScheduler.shutdown 内部是 call_soon_threadsafe 异步完成的，
+    状态切换发生在那次回调里。这里绝不能抢先改 state——否则回调稍后
+    执行时看到已是 STOPPED，会抛 SchedulerNotRunningError。
+    若事件循环先关闭导致回调没机会跑，下次 start() 会检测到死循环并复位。
+    """
+    if not scheduler.running:
+        return
+    try:
+        scheduler.shutdown(wait=False)
+    except Exception:  # noqa: BLE001 - 停机路径不应再抛
+        pass

@@ -39,11 +39,20 @@ def _register_features() -> None:
 
 @app.on_event("startup")
 def startup() -> None:
-    db.init_db()
+    """启动即完成部署：建库、对账表结构、初始化数据，无需手动跑脚本。"""
+    report = db.init_db()
+    report.seeded.extend(db.seed_initial_data())
+    for line in report.lines():
+        print(f"[db] {line}", flush=True)
     if not registry.all():
         _register_features()
     scheduler.start()
     scheduler.reschedule_all()
+
+
+@app.on_event("shutdown")
+def shutdown() -> None:
+    scheduler.stop()
 
 
 # ---------------- 页面 ----------------

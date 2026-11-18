@@ -18,6 +18,29 @@ python3 -m venv .venv
 ./.venv/bin/pip install fastapi uvicorn httpx apscheduler cryptography jinja2 pytest
 ```
 
+**不需要手工建库或跑迁移脚本**——启动时自动完成：
+
+1. `data/` 不存在就创建，`platform.db` 不存在就新建
+2. 逐表对账：缺表建表、缺字段自动 `ALTER TABLE ADD COLUMN`
+3. 库里有代码不认识的字段或类型不符 → 只打印告警，不删不改（可能是代码回滚，删列会丢数据）
+4. 空库按环境变量引导创建管理员（见下）
+
+启动日志会把做了什么说清楚，健康的库只有一行：
+
+```
+[db] 表结构校验通过，无需变更（schema v1）
+```
+
+### 无人值守部署
+
+默认仍可在登录页自助注册。若要用 `ALLOW_REGISTER=0` 关闭注册，必须在**空库的首次启动**时给出管理员凭据，否则没人进得去（日志会明确告警）：
+
+```bash
+ADMIN_USERNAME=admin ADMIN_PASSWORD='你的密码' ALLOW_REGISTER=0 ./run.sh
+```
+
+已有用户的库不会被这条覆盖，重复启动是幂等的。凭据建议放在 `~/.claude/secrets/` 或启动脚本的环境变量里，不要写进仓库。
+
 ## 已有功能
 
 | 功能 | 凭据类型 | 默认定时 | 说明 |
