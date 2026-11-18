@@ -38,6 +38,7 @@ class DishCandidate:
     price: float
     score: float = 0.0
     reasons: list[str] = field(default_factory=list)
+    available: bool = True        # 餐厅是否可订（订满/打烊为 False，前端置灰）
 
 
 def _clean(name: str) -> str:

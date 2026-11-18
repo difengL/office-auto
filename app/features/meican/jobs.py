@@ -106,11 +106,28 @@ def find_meal_item(items: list[dict]) -> dict | None:
     return items[0]
 
 
+def _restaurant_available(r: dict) -> bool:
+    """餐厅是否可订。订满/打烊的餐厅在手机端显示灰色，不能列其菜品。
+
+    实测：不可订餐厅 open=false、availableDishCount=0、restaurantStatus=2；
+    正常餐厅 open=true、availableDishCount>0、restaurantStatus=0。
+    字段缺失时保守视为可订，只有明确不可订才过滤。
+    """
+    if r.get("open") is False:
+        return False
+    if r.get("availableDishCount") == 0:
+        return False
+    if r.get("restaurantStatus") not in (None, 0):
+        return False
+    return True
+
+
 def build_candidates(client: MeicanClient, item: dict, max_price: float) -> list[DishCandidate]:
     tab = (item.get("userTab") or {}).get("uniqueId")
     tt = _target_time_str(item)
     out: list[DishCandidate] = []
     for r in client.restaurants(tab, tt):
+        avail = _restaurant_available(r)
         try:
             menu = client.restaurant_menu(r["uniqueId"], tab, tt)
         except MeicanError:
@@ -122,7 +139,8 @@ def build_candidates(client: MeicanClient, item: dict, max_price: float) -> list
             if max_price and price > max_price:
                 continue
             out.append(DishCandidate(r.get("name", ""), r.get("uniqueId", ""),
-                                     dish.get("id"), dish.get("name", ""), price))
+                                     dish.get("id"), dish.get("name", ""), price,
+                                     available=avail))
     return out
 
 
@@ -160,7 +178,8 @@ def get_candidates_cached(payload: dict, target_day: date,
     else:
         full = build_candidates(client, item, max_price=0)   # 缓存存全量
         raw = [{"restaurant_name": c.restaurant_name, "restaurant_id": c.restaurant_id,
-                "dish_id": c.dish_id, "dish_name": c.dish_name, "price": c.price}
+                "dish_id": c.dish_id, "dish_name": c.dish_name, "price": c.price,
+                "available": c.available}
                for c in full]
         db.gdata_set(key, {"ts": time.time(), "candidates": raw})
 
@@ -169,7 +188,8 @@ def get_candidates_cached(payload: dict, target_day: date,
         if max_price and c["price"] > max_price:
             continue
         out.append(DishCandidate(c["restaurant_name"], c["restaurant_id"],
-                                 c["dish_id"], c["dish_name"], c["price"]))
+                                 c["dish_id"], c["dish_name"], c["price"],
+                                 available=c.get("available", True)))
     return out, item
 
 
@@ -215,6 +235,8 @@ def recommend(payload: dict, cache: dict, target_day: date, limit: int = 5,
         return {"date": target_day.isoformat(), "error": "该日期没有可订餐次"}
     model = PreferenceModel.from_history(fetch_history(payload, cache))
     top = rank_candidates(cands, target_day, model, limit=limit)
+    # 可订的排前面，订满/打烊的置灰排后面（仍展示，但不可订）
+    top.sort(key=lambda c: not c.available)
     return {
         "date": target_day.isoformat(),
         "title": item.get("title"),
@@ -225,6 +247,7 @@ def recommend(payload: dict, cache: dict, target_day: date, limit: int = 5,
             "restaurant_name": c.restaurant_name, "restaurant_id": c.restaurant_id,
             "dish_id": c.dish_id, "dish_name": c.dish_name,
             "price": c.price, "score": c.score, "reasons": c.reasons,
+            "available": c.available,
         } for c in top],
         "total_candidates": len(cands),
     }
@@ -241,12 +264,17 @@ def do_order(payload: dict, cache: dict, target_day: date,
         return JobResult(True, f"{target_day} 已订过餐，跳过", {"skipped": True})
 
     if dish is None:
-        rec = recommend(payload, cache, target_day, limit=1, max_price=max_price)
+        rec = recommend(payload, cache, target_day, limit=5, max_price=max_price)
         if rec.get("error"):
             return JobResult(False, rec["error"])
-        if not rec.get("candidates"):
-            return JobResult(False, "没有符合条件的候选菜品")
-        dish = rec["candidates"][0]
+        # 自动挑菜只挑可订的（订满/打烊的跳过）
+        avail = [c for c in rec.get("candidates", []) if c.get("available", True)]
+        if not avail:
+            return JobResult(False, "没有可订的候选菜品（餐厅可能均已订满）")
+        dish = avail[0]
+
+    if not dish.get("available", True):
+        return JobResult(False, f"「{dish.get('restaurant_name','该餐厅')}」已订满或暂停营业，无法下单")
 
     detail = {"date": target_day.isoformat(), "dish": dish, "dry_run": dry_run}
     if dry_run:

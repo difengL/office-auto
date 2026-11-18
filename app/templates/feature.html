@@ -451,15 +451,23 @@ function dishRow(c, withScore){
     ? `<span class="score">${c.score.toFixed(1)} 分</span>` : '';
   const reasons = withScore && (c.reasons||[]).length
     ? `<div class="muted reasons">${esc(c.reasons.join(' · '))}</div>` : '';
-  // 当天未订才给「订餐」按钮；把菜品信息存进 data 属性供点击时取用
-  const orderBtn = todayOrdered ? '' :
-    `<button class="order-btn" data-dish='${esc(JSON.stringify({
-      dish_id:c.dish_id, dish_name:c.dish_name,
-      restaurant_id:c.restaurant_id, restaurant_name:c.restaurant_name, price:c.price
-    }))}'>订餐</button>`;
-  return `<div class="dish">
+  const unavailable = c.available === false;
+  // 当天未订才给「订餐」按钮；订满/打烊的餐厅置灰、按钮禁用
+  let orderBtn = '';
+  if(!todayOrdered){
+    if(unavailable){
+      orderBtn = `<button class="order-btn" disabled title="该餐厅已订满或暂停营业">已订满</button>`;
+    } else {
+      orderBtn = `<button class="order-btn" data-dish='${esc(JSON.stringify({
+        dish_id:c.dish_id, dish_name:c.dish_name,
+        restaurant_id:c.restaurant_id, restaurant_name:c.restaurant_name,
+        price:c.price, available:true
+      }))}'>订餐</button>`;
+    }
+  }
+  return `<div class="dish${unavailable?' unavailable':''}">
     <div class="dish-main"><span class="dish-name">${esc(c.dish_name)}</span>${score}</div>
-    <span class="muted">${esc(c.restaurant_name)}</span>
+    <span class="muted">${esc(c.restaurant_name)}${unavailable?' · 已订满':''}</span>
     ${orderBtn}${reasons}</div>`;
 }
 

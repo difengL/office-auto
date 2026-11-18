@@ -147,6 +147,11 @@
     font-weight:600;white-space:nowrap;grid-row:1;grid-column:3}
   .order-btn:disabled{opacity:.5;cursor:not-allowed}
   .dish{grid-template-columns:1fr auto auto}
+  /* 订满/打烊的餐厅置灰，与手机端一致 */
+  .dish.unavailable{opacity:.45}
+  .dish.unavailable .dish-name{font-weight:400}
+  .dish.unavailable .order-btn{background:var(--panel-2);color:var(--muted);
+    border:1px solid var(--line);opacity:1;cursor:not-allowed}
 
   /* 本周水果推荐 */
   .fruit-box{margin:16px 0;padding:14px 16px;border-radius:10px;
