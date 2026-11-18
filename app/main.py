@@ -124,6 +124,17 @@ def _feature_or_404(key: str):
     return f
 
 
+def _business_next_run(user_id: int, key: str, jobs) -> str | None:
+    """主页面展示的「下次执行」：取最早的非 always_on 业务任务。
+
+    保活是后台基础设施，不属于用户理解的「定时」，不参与展示。
+    """
+    times = [scheduler.next_run(user_id, key, j.job_id)
+             for j in jobs if not j.always_on]
+    times = [t for t in times if t]
+    return min(times) if times else None
+
+
 @app.get("/api/features")
 def features(user: db.User = Depends(web_auth.current_user)):
     out = []
@@ -139,9 +150,14 @@ def features(user: db.User = Depends(web_auth.current_user)):
             "dry_run": cfg.dry_run if saved else f.dry_run_default,
             "display": (cred.payload.get("userName") or cred.payload.get("username")
                     or cred.payload.get("phone") or ""),
+            # always_on 是保活在后台的排期，对用户透明：主页面的「下次执行」
+            # 只应反映业务任务，不能把保活的时间暴露出来（定时关闭时更会
+            # 让人误解「明明关了怎么还有下次执行」）。
             "jobs": [{"job_id": j.job_id, "name": j.name,
+                      "always_on": j.always_on,
                       "next_run": scheduler.next_run(user.id, f.key, j.job_id)}
                      for j in f.default_jobs],
+            "next_run": _business_next_run(user.id, f.key, f.default_jobs),
         })
     return {"features": out}
 

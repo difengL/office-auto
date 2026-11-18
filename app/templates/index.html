@@ -64,7 +64,8 @@ async function boot(){
     if(!features.length){ $('#empty').style.display='block'; return; }
     $('#features').innerHTML = features.map(f=>{
       const [label,cls] = STATE_LABEL[f.state] || [f.state,''];
-      const next = (f.jobs||[]).map(j=>j.next_run).filter(Boolean)[0];
+      // next_run 已由后端滤掉保活，只反映用户开启的业务任务
+      const next = f.next_run;
       return `<a class="cardlink card" href="/feature/${f.key}">
         <div class="fname">${f.name} <span class="badge ${cls}">${label}</span></div>
         <div class="fdesc">${f.description||''}</div>

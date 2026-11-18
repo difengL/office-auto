@@ -117,7 +117,11 @@ def ka_client(tmp_path, monkeypatch):
     registry.clear()
     registry.register(KeepaliveFeature())
     from app import main
+    from app.core import scheduler as sched_mod
     with TestClient(main.app) as c:
+        # scheduler 是模块级单例，上一个测试的用户作业（user_id 相同）
+        # 会残留，污染 next_run 断言。每个测试从干净调度表开始。
+        sched_mod.scheduler.remove_all_jobs()
         yield c
     registry.clear()
 
@@ -146,3 +150,47 @@ def test_display_falls_back_to_phone(ka_client):
 
     detail = ka_client.get("/api/features/ka").json()
     assert detail["display"] == "17600610776"
+
+
+# ---------- 主页面「下次执行」不得暴露保活 ----------
+
+def test_index_next_run_hidden_when_schedule_disabled(ka_client):
+    """定时关闭时，主页面「下次执行」必须为空。
+
+    回归背景：保活是 always_on，即便定时关闭也在后台排期，旧实现
+    直接把 jobs 的 next_run 拿来展示，导致「定时关闭」却显示下次执行时间。
+    """
+    ka_client.post("/api/register", json={"username": "k3", "password": "pw123456"})
+    ka_client.post("/api/features/ka/login", json={"phone": "17600610776"})
+
+    f = next(x for x in ka_client.get("/api/features").json()["features"]
+             if x["key"] == "ka")
+    assert f["enabled"] is False
+    # 保活确实在跑，但业务任务没排期
+    ka_jobs = {j["job_id"]: j for j in f["jobs"]}
+    assert ka_jobs["keepalive"]["next_run"] is not None
+    assert ka_jobs["keepalive"]["always_on"] is True
+    assert ka_jobs["order"]["next_run"] is None
+    # 汇总字段过滤掉保活 → 空
+    assert f["next_run"] is None
+
+
+def test_index_next_run_shows_business_job_when_enabled(ka_client):
+    ka_client.post("/api/register", json={"username": "k4", "password": "pw123456"})
+    ka_client.post("/api/features/ka/login", json={"phone": "17600610776"})
+    ka_client.post("/api/features/ka/config",
+                   json={"enabled": True, "dry_run": False, "schedule": {}, "options": {}})
+
+    f = next(x for x in ka_client.get("/api/features").json()["features"]
+             if x["key"] == "ka")
+    assert f["next_run"] is not None
+    order = next(j for j in f["jobs"] if j["job_id"] == "order")
+    assert f["next_run"] == order["next_run"]
+
+
+def test_index_next_run_none_without_credential(ka_client):
+    """未登录（无凭据）时保活不排期，下次执行同样为空。"""
+    ka_client.post("/api/register", json={"username": "k5", "password": "pw123456"})
+    f = next(x for x in ka_client.get("/api/features").json()["features"]
+             if x["key"] == "ka")
+    assert f["next_run"] is None
