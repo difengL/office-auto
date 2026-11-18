@@ -368,7 +368,7 @@ function renderToday(d){
   if(d.ordered){
     const od = d.order_detail || {};
     const dishes = (od.dishes||[]).map(x=>
-      `<span class="today-dish">${esc(x.name)}<em>¥${(x.price||0).toFixed(0)}</em></span>`).join('');
+      `<span class="today-dish">${esc(x.name)}</span>`).join('');
     let extra = '';
     if(od.postbox){
       const pb = typeof od.postbox==='object'?od.postbox:{postboxCode:od.postbox};
@@ -426,7 +426,6 @@ function dishRow(c, withScore){
   return `<div class="dish">
     <div class="dish-main"><span class="dish-name">${esc(c.dish_name)}</span>${score}</div>
     <span class="muted">${esc(c.restaurant_name)}</span>
-    <span class="price">¥${(c.price||0).toFixed(2)}</span>
     ${orderBtn}${reasons}</div>`;
 }
 
@@ -434,7 +433,7 @@ function bindOrderButtons(){
   document.querySelectorAll('.order-btn').forEach(b=>{
     b.onclick = async () => {
       const dish = JSON.parse(b.dataset.dish);
-      if(!confirm(`确认订「${dish.dish_name}」（${dish.restaurant_name}，¥${(dish.price||0).toFixed(0)}）？`)) return;
+      if(!confirm(`确认订「${dish.dish_name}」（${dish.restaurant_name}）？`)) return;
       const restore = withLoading(b, '订餐中…');
       try {
         const r = await api(`/api/features/${KEY}/do/order_dish`,
