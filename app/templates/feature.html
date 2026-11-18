@@ -67,6 +67,7 @@
       </div>
       <div id="alwaysOnNote" class="note" hidden></div>
       <div id="jobTimes" class="fields" style="margin-top:18px"></div>
+      <div id="settingsBox"></div>
       <div id="options" class="fields" style="margin-top:18px"></div>
       <div class="row" style="margin-top:20px">
         <button id="btnSave">保存设置</button>
@@ -217,11 +218,15 @@ function scheduleLabel(j, cur) {
 function renderJobs() {
   $('#jobTimes').innerHTML = detail.jobs.filter(j=>j.editable).map(j=>{
     const cur = (detail.config.schedule||{})[j.job_id] || j.default || {};
-    // 日期由功能决定（周五提交周报不可能改成周三），用户只调时刻
+    // 星期由功能固定（周五提交周报不可能改成周三），界面上只让用户调时刻
     const dayTag = j.day_label ? `<span class="badge">${j.day_label}</span>` : '';
-    const hint = j.trigger === 'cron' ? '时刻 HH:MM' : '间隔，如 360 分钟';
+    const hint = j.trigger === 'cron' ? '时间 HH:MM' : '间隔，如 360 分钟';
+    // 有固定星期的任务，输入框只放时刻，不再重复写一遍星期
+    const value = j.day_label && j.trigger === 'cron'
+      ? `${pad2(cur.hour ?? 9)}:${pad2(cur.minute ?? 0)}`
+      : scheduleLabel(j, cur);
     return `<label>${j.name} ${dayTag}（${hint}）</label>
-            <input data-sched="${j.job_id}" value="${scheduleLabel(j, cur)}">
+            <input data-sched="${j.job_id}" value="${value}">
             <div class="muted" style="font-size:12px;margin-top:4px">
               下次：${j.next_run||'未启用'}${j.failures>=3?` · <span class="err">连续失败 ${j.failures} 次</span>`:''}
             </div>`;
@@ -250,6 +255,67 @@ function renderJobs() {
       finally { restore(); }
     };
   });
+}
+
+/* 功能专属设置：目前只有 HEM 的逐日工时。
+   每天一个输入框，默认 8 小时；跨周由后端自动恢复默认值。 */
+function renderSettings() {
+  const s = detail.settings;
+  if (!s || s.kind !== 'hours_by_day') { $('#settingsBox').innerHTML = ''; return; }
+  const days = s.days || [];
+  $('#settingsBox').innerHTML = `
+    <div class="hours-box">
+      <div class="hours-head">
+        <span class="hours-title">${s.title}</span>
+        <span class="muted" style="font-size:12px">${s.note||''}</span>
+      </div>
+      <div class="hours-grid">
+        ${days.map(d=>`
+          <label class="hours-cell">
+            <span class="hours-day">${d.label}</span>
+            <input type="number" min="0" max="24" step="0.5"
+                   data-hours="${d.key}" value="${d.hours}">
+            <span class="hours-unit">${s.unit||'小时'}</span>
+          </label>`).join('')}
+      </div>
+      <div class="hours-foot">
+        <span class="muted" style="font-size:12px">合计
+          <b id="hoursTotal">${hoursTotal(days)}</b> 小时</span>
+        <button class="ghost" id="btnSaveHours" style="padding:6px 14px;font-size:13px">
+          保存工时</button>
+      </div>
+    </div>`;
+  document.querySelectorAll('[data-hours]').forEach(i=>{
+    i.oninput = () => { $('#hoursTotal').textContent = hoursTotalFromInputs(); };
+  });
+  $('#btnSaveHours').onclick = saveHours;
+}
+
+function hoursTotal(days){
+  return days.reduce((a,d)=>a + (Number(d.hours)||0), 0).toFixed(1).replace(/\.0$/,'');
+}
+function hoursTotalFromInputs(){
+  let sum = 0;
+  document.querySelectorAll('[data-hours]').forEach(i=>{ sum += Number(i.value)||0; });
+  return sum.toFixed(1).replace(/\.0$/,'');
+}
+
+async function saveHours(e){
+  const btn = e.currentTarget;
+  const days = {};
+  document.querySelectorAll('[data-hours]').forEach(i=>{
+    const v = parseFloat(i.value);
+    if (Number.isFinite(v)) days[i.dataset.hours] = v;
+  });
+  const restore = withLoading(btn, '保存中…');
+  try {
+    const r = await api(`/api/features/${KEY}/settings`,
+      {method:'POST', body: JSON.stringify({days})});
+    detail.settings = r.settings;
+    renderSettings();
+    toast('工时设置已保存','ok');
+  } catch(err){ toast(err.message,'err'); }
+  finally { restore(); }
 }
 
 function renderOptions() {
@@ -333,7 +399,7 @@ async function load() {
   $('#enabled').checked = !!detail.config.enabled;
   applyLayout(switching);
 
-  renderFields(); renderJobs(); renderOptions();
+  renderFields(); renderJobs(); renderSettings(); renderOptions();
   if(isLoggedIn()){ await loadRuns(); loadToday(); }
 }
 
@@ -572,8 +638,9 @@ $('#btnLogin').onclick = async () => {
 };
 
 function parseTimeInput(text, prev) {
-  // 用户可能写「每周五 20:00」「20:00」「每 30 分钟」「每 2 小时」，
-  // 也允许只改时刻不动星期——星期保存在 default 里，不在这里覆盖。
+  // 用户可能写「20:00」「每周五 20:00」「每 30 分钟」「每 2 小时」。
+  // 星期由功能固定时界面只显示时刻；即便用户手写了星期，
+  // 保存时后端也会按 fixed_fields 丢弃，不会改到排期。
   const h = text.match(/每\s*(\d+(?:\.\d+)?)\s*(小时|分钟)/);
   if (h) {
     const n = parseFloat(h[1]);

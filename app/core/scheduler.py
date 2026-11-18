@@ -52,7 +52,10 @@ def job_id(feature_key: str, jid: str, user_id: int) -> str:
 
 
 def _cron_trigger(spec, override: dict) -> dict:
-    merged = {**spec.default, **override}
+    # fixed_fields 里的键（如 day_of_week）不允许用户覆盖，永远取默认值
+    merged = {k: v for k, v in (override or {}).items()
+              if k not in spec.fixed_fields}
+    merged = {**spec.default, **merged}
     kw = {k: v for k, v in merged.items()
           if k in ("hour", "minute", "second", "day_of_week", "day", "month")}
     if spec.jitter:

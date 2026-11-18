@@ -158,6 +158,20 @@
     opacity:1;cursor:default}
   .dish.current-dish{border-color:#1f4d3a;background:#10231b}
 
+  /* 逐日工时设置 */
+  .hours-box{margin-top:18px;padding:14px 16px;border:1px solid var(--line);
+    border-radius:10px;background:#12151c}
+  .hours-head{display:flex;flex-direction:column;gap:4px;margin-bottom:12px}
+  .hours-title{font-weight:600;font-size:14px}
+  .hours-grid{display:grid;grid-template-columns:repeat(5,1fr);gap:10px}
+  .hours-cell{display:flex;flex-direction:column;gap:5px;margin:0}
+  .hours-day{font-size:12px;color:var(--muted)}
+  .hours-cell input{padding:7px 9px;font-size:14px;text-align:center}
+  .hours-unit{font-size:11px;color:var(--muted);text-align:center}
+  .hours-foot{display:flex;align-items:center;gap:14px;margin-top:12px}
+  .hours-foot button{margin-left:auto}
+  @media(max-width:640px){.hours-grid{grid-template-columns:repeat(2,1fr)}}
+
   /* 本周水果推荐 */
   .fruit-box{margin:16px 0;padding:14px 16px;border-radius:10px;
     background:#12151c;border:1px solid var(--line)}

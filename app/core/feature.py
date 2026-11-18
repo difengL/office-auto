@@ -49,6 +49,9 @@ class JobSpec:
     default: dict               # cron: hour/minute/second/day_of_week；interval: minutes/hours
     jitter: int = 0             # 随机抖动秒数
     editable: bool = True
+    # 只允许用户改时刻，星期/日期由插件固定（如「每周五提交周报」——
+    # 改成周三毫无意义）。这些键会被调度器忽略，始终以 default 为准。
+    fixed_fields: tuple[str, ...] = ()
     # 基础设施型任务（如登录保活）：不跟着「启用定时任务」开关，只要凭据
     # 有效就自动运行。用户不需要理解它，也不该因为忘了打勾就掉登录态。
     always_on: bool = False
@@ -175,3 +178,16 @@ class Feature(ABC):
         插件在这里说明怎么迁，core 只负责调用与落库。
         """
         return False
+
+    # ---------- 功能专属设置（如 HEM 的逐日工时） ----------
+
+    def get_settings(self, user_id: int) -> dict | None:
+        """返回该功能的自定义设置，供界面渲染。None 表示没有此类设置。
+
+        这些设置会随功能详情一起下发，界面按返回的结构自行渲染。
+        """
+        return None
+
+    def save_settings(self, user_id: int, body: dict) -> dict:
+        """保存自定义设置，返回保存后的结构（与 get_settings 同形）。"""
+        raise FeatureLoginError("该功能没有可保存的设置")

@@ -193,16 +193,19 @@ def feature_detail(key: str, user: db.User = Depends(web_auth.current_user)):
                    "dry_run": cfg.dry_run if saved else f.dry_run_default,
                    "schedule": cfg.schedule, "options": cfg.options},
         "jobs": [{**vars(j), "next_run": scheduler.next_run(user.id, key, j.job_id),
-                  # 星期以「默认 + 用户覆盖」合并后的值为准，与调度器一致
+                  # 星期以「默认 + 可覆盖项」合并后的值为准，与调度器一致；
+                  # fixed_fields 的值不参与合并
                   "day_label": scheduler.day_label(
                       {**(j.default or {}),
-                       **((cfg.schedule or {}).get(j.job_id) or {})}.get("day_of_week")),
+                       **{k: v for k, v in ((cfg.schedule or {}).get(j.job_id) or {}).items()
+                          if k not in j.fixed_fields}}.get("day_of_week")),
                   "failures": db.consecutive_failures(user.id, key, j.job_id)}
                  for j in f.default_jobs],
         "manual_run": f.manual_run,
         "extra_options": [vars(x) for x in f.extra_options],
         "option_values": options_values,
         "views": [vars(x) for x in f.views],
+        "settings": f.get_settings(user.id),
     }
 
 
@@ -233,14 +236,35 @@ def feature_config(key: str, body: ConfigBody,
                    user: db.User = Depends(web_auth.current_user)):
     f = _feature_or_404(key)
     cfg = db.FeatureConfig(key, body.enabled, body.dry_run, body.schedule, body.options)
-    # editable=False 的任务不接受用户改时间
-    editable_ids = {j.job_id for j in f.default_jobs if j.editable}
-    cfg.schedule = {k: v for k, v in cfg.schedule.items() if k in editable_ids}
+    # editable=False 的任务不接受用户改时间；fixed_fields 的键（如星期）
+    # 由插件固定，一并丢弃，避免库里留下与排期不符的脏数据
+    editable = {j.job_id: set(j.fixed_fields) for j in f.default_jobs if j.editable}
+    clean = {}
+    for jid, sched in cfg.schedule.items():
+        if jid not in editable or not isinstance(sched, dict):
+            continue
+        clean[jid] = {k: v for k, v in sched.items() if k not in editable[jid]}
+    cfg.schedule = clean
     db.save_feature_config(user.id, key, cfg)
     db.fdata_set(user.id, key, "__config_saved__", True)   # 标记已初始化，之后不再套用插件默认
     scheduler.reschedule_user(user.id)
     return {"ok": True, "config": {"enabled": cfg.enabled, "dry_run": cfg.dry_run,
                                    "schedule": cfg.schedule, "options": cfg.options}}
+
+
+@app.post("/api/features/{key}/settings")
+def feature_settings(key: str, body: dict,
+                     user: db.User = Depends(web_auth.current_user)):
+    """保存功能专属设置（如 HEM 的逐日工时）。"""
+    f = _feature_or_404(key)
+    try:
+        saved = f.save_settings(user.id, body or {})
+    except FeatureLoginError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(400, f"{type(exc).__name__}: {exc}") from exc
+    scheduler.reschedule_user(user.id)
+    return {"ok": True, "settings": saved}
 
 
 @app.post("/api/features/{key}/action")
