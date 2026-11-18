@@ -266,6 +266,17 @@ class MeicanClient:
         )
         return payload.get("dateList") or []
 
+    def corp_notices(self) -> list[dict]:
+        """企业公告列表（含「本周水果菜单」等）。"""
+        payload = self._v3_get("corpNotice/list")
+        return payload.get("data") or []
+
+    def corp_addresses(self, namespace: str) -> dict:
+        """企业取餐地址。返回 data（含 recentList / addressList）。"""
+        payload = self._v3_get("corpaddresses/getmulticorpaddress",
+                               {"namespace": namespace})
+        return payload.get("data") or {}
+
     def restaurants(self, tab_unique_id: str, target_time: str) -> list[dict]:
         payload = self._v3_get(
             "restaurants/list",
@@ -317,9 +328,21 @@ class MeicanClient:
             "corpAddressRemark": "",
         }
         payload = self._v3_post("orders/add", data)
-        if payload.get("resultDescription") not in (None, "SUCCESS", "SUCCESSFUL"):
-            raise MeicanError(payload.get("resultDescription") or "下单失败", payload=payload)
+        # 美餐下单可能 HTTP 200 却在 body 里标示失败，必须严格判断。
+        # 实测成功响应是顶层 {"status":"SUCCESSFUL","order":{...}}；
+        # 失败是顶层 {"status":"CORP_ADDRESS_NOT_FOUND","message":"..."}。
+        # 兼容 data 包裹层与旧式 resultDescription。
+        inner = payload.get("data") or {}
+        ok = (payload.get("status") == "SUCCESSFUL"
+              or inner.get("status") == "SUCCESSFUL"
+              or payload.get("resultDescription") in ("SUCCESS", "SUCCESSFUL"))
+        if not ok:
+            msg = (payload.get("message") or inner.get("message")
+                   or payload.get("resultDescription") or "下单失败")
+            raise MeicanError(msg, payload=payload)
         return payload
 
     def delete_order(self, order_unique_id: str) -> dict:
-        return self._v3_post("orders/delete", {"uniqueId": order_unique_id})
+        return self._v3_post("orders/delete",
+                             {"uniqueId": order_unique_id, "type": "CORP_ORDER",
+                              "restoreCart": "false"})

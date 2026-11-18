@@ -38,6 +38,7 @@ class MeicanFeature(Feature):
         ViewSpec("status", "今日订餐状态", kind="status"),
         ViewSpec("recommend", "按口味推荐", kind="recommend"),
         ViewSpec("candidates", "当天可订菜品", kind="candidates"),
+        ViewSpec("fruit", "本周水果", kind="fruit"),
     ]
 
     async def login(self, user_id: int, payload: dict) -> dict:
@@ -227,6 +228,8 @@ class MeicanFeature(Feature):
                 return data
             if view_id == "candidates":
                 return self._candidates_view(payload, target)
+            if view_id == "fruit":
+                return jobs.get_fruit_menu(payload, target)
         except MeicanError as exc:
             raise FeatureLoginError(f"查询失败：{exc}") from exc
         raise FeatureLoginError(f"未知视图：{view_id}")

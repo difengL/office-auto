@@ -25,7 +25,7 @@ def tmp_db(tmp_path, monkeypatch):
 
 def test_views_declared():
     ids = {v.view_id for v in MeicanFeature.views}
-    assert ids == {"status", "recommend", "candidates"}
+    assert ids == {"status", "recommend", "candidates", "fruit"}
     assert all(isinstance(v, ViewSpec) for v in MeicanFeature.views)
 
 

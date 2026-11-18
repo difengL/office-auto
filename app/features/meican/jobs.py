@@ -256,17 +256,46 @@ def do_order(payload: dict, cache: dict, target_day: date,
     item = status["raw_item"]
     tab = (item.get("userTab") or {}).get("uniqueId")
     tt = _target_time_str(item)
+    address_id = _resolve_address(client, item)
+    if not address_id:
+        return JobResult(False, "下单失败：未找到企业取餐地址，请先在美餐里选一次取餐地址", detail)
     try:
         res = client.place_order(
             tab_unique_id=tab, target_time=tt,
             dishes=[{"dishId": dish["dish_id"], "count": 1}],
-            address_unique_id=(item.get("corpAddress") or {}).get("uniqueId", ""),
+            address_unique_id=address_id,
         )
     except MeicanError as exc:
         return JobResult(False, f"下单失败：{exc}", detail)
     detail["response"] = res
     cache.setdefault("restaurant_names", {})[dish["restaurant_id"]] = dish["restaurant_name"]
     return JobResult(True, f"下单成功：{dish['restaurant_name']} / {dish['dish_name']}", detail)
+
+
+def _resolve_address(client: MeicanClient, item: dict) -> str:
+    """取企业取餐地址 uniqueId：优先餐次自带，其次最近用过，再次地址列表首个。
+
+    美餐下单必须带企业地址，否则返回 CORP_ADDRESS_NOT_FOUND。
+    """
+    addr = (item.get("corpAddress") or {}).get("uniqueId")
+    if addr:
+        return addr
+    corp = (item.get("userTab") or {}).get("corp") or {}
+    ns = corp.get("namespace") or corp.get("uniqueId") or ""
+    if not ns:
+        return ""
+    try:
+        data = client.corp_addresses(ns)
+    except MeicanError:
+        return ""
+    recent = data.get("recentList") or []
+    if recent and recent[0].get("uniqueId"):
+        return recent[0]["uniqueId"]
+    for a in data.get("addressList") or []:
+        fv = a.get("finalValue") or {}
+        if fv.get("uniqueId"):
+            return fv["uniqueId"]
+    return ""
 
 
 def load_cache(user_id: int) -> dict:
@@ -284,3 +313,83 @@ def save_cache(user_id: int, cache: dict) -> None:
     if cache.get("history") is not None:
         db.fdata_set(user_id, "meican", "history", cache["history"])
     db.fdata_set(user_id, "meican", "restaurant_names", cache.get("restaurant_names") or {})
+
+
+# ---------------- 本周水果菜单 ----------------
+
+FRUIT_TTL = 12 * 3600        # 水果菜单每周换一次，缓存 12 小时足够新鲜
+_WEEKDAYS = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"]
+
+
+def parse_fruit_menu(content: str) -> dict:
+    """从公告正文解析每天的水果。
+
+    正文形如：
+        周一\\r\\n【整果】云南青柚+鸡心果+香蕉+龙眼1000g\\r\\n周二\\r\\n...
+    返回 {"周一": "【整果】...", ...}。识别不到的天跳过。
+    每天的水果行以「【...】」开头；遇到「温馨提示」等说明性文字即停止
+    累积，避免把公告尾部说明混进最后一天。
+    """
+    text = (content or "").replace("\r\n", "\n").replace("\r", "\n")
+    lines = [ln.strip() for ln in text.split("\n")]
+    out: dict[str, str] = {}
+    current = None
+    for ln in lines:
+        if ln in _WEEKDAYS:
+            current = ln
+            out.setdefault(current, "")
+        elif current and ln:
+            if ln.startswith("【"):
+                out[current] = (out[current] + " " + ln).strip() if out[current] else ln
+            else:
+                # 非水果描述行（如「温馨提示」），结束当前天的累积
+                current = None
+    return {k: v for k, v in out.items() if v}
+
+
+def get_fruit_menu(payload: dict, target_day: date) -> dict:
+    """取本周水果菜单，按企业全局缓存。返回当天 + 整周。
+
+    水果菜单是企业公告，同企业用户共享，每周换一次。
+    """
+    from app.core import db
+    client = _client(payload)
+    # 先确定企业namespace（从当天餐次取），用于缓存键
+    ns = "default"
+    try:
+        days = client.calendar_items(target_day, target_day, with_order=False)
+        if days and days[0].get("calendarItemList"):
+            item = find_meal_item(days[0]["calendarItemList"])
+            corp = (item.get("userTab") or {}).get("corp") or {}
+            ns = corp.get("namespace") or corp.get("uniqueId") or "default"
+    except MeicanError:
+        pass
+
+    # 缓存键按「本周一」对齐，整周共享一份
+    monday = target_day - timedelta(days=target_day.weekday())
+    key = f"meican:fruit:{monday.isoformat()}:{ns}"
+    cached = db.gdata_get(key)
+    if cached and time.time() - cached.get("ts", 0) < FRUIT_TTL:
+        menu = cached["menu"]
+        title = cached.get("title", "本周水果菜单")
+    else:
+        menu, title = {}, "本周水果菜单"
+        try:
+            for notice in client.corp_notices():
+                if "水果" in (notice.get("title") or ""):
+                    menu = parse_fruit_menu(notice.get("content") or "")
+                    title = notice.get("title") or title
+                    break
+        except MeicanError:
+            menu = {}
+        db.gdata_set(key, {"ts": time.time(), "menu": menu, "title": title})
+
+    weekday = _WEEKDAYS[target_day.weekday()]
+    return {
+        "date": target_day.isoformat(),
+        "weekday": weekday,
+        "title": title,
+        "today": menu.get(weekday, ""),
+        "week": [{"weekday": w, "fruit": menu[w]} for w in _WEEKDAYS[:5] if w in menu],
+        "available": bool(menu),
+    }

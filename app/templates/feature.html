@@ -50,6 +50,7 @@
         <button class="ghost" id="btnRefreshToday" style="padding:6px 12px;font-size:13px">刷新</button>
       </div>
       <div id="todayBody" class="muted">加载中…</div>
+      <div id="fruitBox" class="fruit-box" hidden></div>
       <div id="mealTabs" class="meal-tabs" hidden>
         <button class="ghost tab active" data-tab="recommend">按口味推荐</button>
         <button class="ghost tab" data-tab="candidates">当天可订菜品</button>
@@ -349,6 +350,7 @@ async function loadToday(){
   body.innerHTML = '<span class="muted">加载中…</span>';
   $('#mealTabs').hidden = true;
   $('#mealList').innerHTML = '';
+  $('#fruitBox').hidden = true;
   try {
     const r = await api(`/api/features/${KEY}/view/status?date=${d}`);
     todayOrdered = !!r.data.ordered;
@@ -358,9 +360,41 @@ async function loadToday(){
       $('#mealTabs').hidden = false;
       loadMealList();
     }
+    loadFruit();    // 水果推荐独立加载，不阻塞订餐状态
   } catch(e){
     body.innerHTML = `<span class="err">${esc(e.message)}</span>`;
   }
+}
+
+/* ---------- 本周水果推荐 ---------- */
+let fruitExpanded = false;
+async function loadFruit(){
+  const box = $('#fruitBox');
+  if(!(detail.views||[]).some(v=>v.view_id==='fruit')){ box.hidden=true; return; }
+  try {
+    const r = await api(`/api/features/${KEY}/view/fruit?date=${encodeURIComponent(viewDate())}`);
+    if(!r.data.available){ box.hidden=true; return; }
+    box.hidden = false;
+    box.innerHTML = renderFruit(r.data);
+    const more = box.querySelector('#fruitMore');
+    if(more) more.onclick = () => { fruitExpanded = !fruitExpanded; box.innerHTML = renderFruit(r.data);
+      const m2 = box.querySelector('#fruitMore'); if(m2) m2.onclick = more.onclick; };
+  } catch(e){ box.hidden = true; }   // 水果加载失败不影响主流程
+}
+
+function renderFruit(d){
+  const today = d.today
+    ? `<div class="fruit-today"><span class="fruit-day">${esc(d.weekday)}</span>${esc(d.today)}</div>`
+    : `<div class="muted">${esc(d.weekday)}暂无水果信息</div>`;
+  let html = `<div class="fruit-head"><span class="fruit-title">🍊 ${esc(d.title||'本周水果')}</span>
+    <button class="ghost" id="fruitMore" style="padding:4px 12px;font-size:12px">${fruitExpanded?'收起':'查看更多'}</button></div>
+    ${today}`;
+  if(fruitExpanded && (d.week||[]).length){
+    html += '<div class="fruit-week">' + d.week.map(x=>
+      `<div class="fruit-row${x.weekday===d.weekday?' cur':''}">
+        <span class="fruit-day">${esc(x.weekday)}</span><span>${esc(x.fruit)}</span></div>`).join('') + '</div>';
+  }
+  return html;
 }
 
 function renderToday(d){
