@@ -30,11 +30,24 @@ def keepalive(payload: dict) -> bool:
         return False
 
 
-def fetch_history(payload: dict, cache: dict, days: int = 90,
+HISTORY_TTL = 12 * 3600        # 历史订单缓存 12 小时
+# 美餐日历接口实测只能查约 75 天内，更早返回 "Period is out of range"。
+# 取 60 天留足余量；偏好模型本身用 14 天半衰期，60 天足够。
+HISTORY_DAYS = 60
+
+
+def fetch_history(payload: dict, cache: dict, days: int = HISTORY_DAYS,
                   max_pages: int = 8) -> list[dict]:
-    """拉取历史订单，带 12 小时缓存。cache 由调用方按用户持久化。"""
+    """拉取历史订单，带 12 小时缓存。
+
+    cache 是按用户持久化的字典，含两个独立子键：
+      - "history": {"ts": 拉取时间, "records": [...]}
+      - "restaurant_names": {餐厅id: 餐厅名}
+    首次使用（缓存为空）会自动从美餐 API 拉取——新用户登录、上生产
+    初始化都走这一条，无需迁移旧库。调用方负责把 cache 回写持久化。
+    """
     cached = cache.get("history")
-    if cached and time.time() - cached.get("ts", 0) < 12 * 3600:
+    if cached and time.time() - cached.get("ts", 0) < HISTORY_TTL:
         return cached["records"]
 
     client = _client(payload)
@@ -49,7 +62,10 @@ def fetch_history(payload: dict, cache: dict, days: int = 90,
         try:
             day_items = client.calendar_items(cursor, chunk_end, with_order=True)
         except MeicanError:
-            break
+            # 单段失败（如超出可查范围）跳过继续，不要整体中断，
+            # 否则一段报错就丢掉后面所有能查到的历史。
+            cursor = chunk_end + timedelta(days=1)
+            continue
         pages += 1
         for day in day_items:
             d = day.get("targetTime") or cursor.isoformat()
@@ -209,3 +225,20 @@ def do_order(payload: dict, cache: dict, target_day: date,
     detail["response"] = res
     cache.setdefault("restaurant_names", {})[dish["restaurant_id"]] = dish["restaurant_name"]
     return JobResult(True, f"下单成功：{dish['restaurant_name']} / {dish['dish_name']}", detail)
+
+
+def load_cache(user_id: int) -> dict:
+    """读取该用户的美餐缓存（历史 + 餐厅名），两个独立 KV 键合成一个 dict。"""
+    from app.core import db
+    return {
+        "history": db.fdata_get(user_id, "meican", "history", default=None),
+        "restaurant_names": db.fdata_get(user_id, "meican", "restaurant_names", default={}) or {},
+    }
+
+
+def save_cache(user_id: int, cache: dict) -> None:
+    """把缓存回写持久化。历史与餐厅名分别存独立键，互不污染。"""
+    from app.core import db
+    if cache.get("history") is not None:
+        db.fdata_set(user_id, "meican", "history", cache["history"])
+    db.fdata_set(user_id, "meican", "restaurant_names", cache.get("restaurant_names") or {})

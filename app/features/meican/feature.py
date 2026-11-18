@@ -95,8 +95,22 @@ class MeicanFeature(Feature):
             "remember": remember,      # 长期凭据，实测约 2 个月有效
         })
         payload.pop("code", None)          # 验证码是一次性的，不落库
+
+        # 首次登录自动初始化历史口味：从美餐 API 拉近 90 天订单建偏好模型。
+        # 新用户、上生产部署都走这里，不依赖旧库迁移。失败不阻断登录。
+        history_ready = False
+        try:
+            cache = jobs.load_cache(user_id)
+            if not (cache.get("history") or {}).get("records"):
+                jobs.fetch_history(payload, cache)
+                jobs.save_cache(user_id, cache)
+            history_ready = bool((cache.get("history") or {}).get("records"))
+        except Exception:  # noqa: BLE001
+            history_ready = False
+
         msg = acct.get("name") or phone
-        return {"display": msg, "long_term": bool(remember)}
+        return {"display": msg, "long_term": bool(remember),
+                "history_ready": history_ready}
 
     async def send_action(self, user_id: int, action: str, payload: dict) -> str:
         if action != "send_sms":
@@ -140,7 +154,6 @@ class MeicanFeature(Feature):
     async def run_job(self, user_id: int, job_id: str, ctx: JobContext) -> JobResult:
         cred = db.load_credential(user_id, self.key)
         payload = cred.payload
-        cache = ctx.get_data("restaurant_names", default={})
 
         if job_id == "keepalive":
             if jobs.keepalive(payload):
@@ -153,10 +166,11 @@ class MeicanFeature(Feature):
             return JobResult(False, "登录态失效，请重新短信登录")
 
         if job_id == "order":
+            cache = jobs.load_cache(user_id)
             days = int(ctx.options.get("target_offset_days", 1))
             target = date.today() + timedelta(days=days)
             result = jobs.do_order(payload, cache, target, None, ctx.dry_run)
-            ctx.set_data("restaurant_names", cache)
+            jobs.save_cache(user_id, cache)
             return result
 
         return JobResult(False, f"未知任务：{job_id}")
@@ -174,14 +188,16 @@ class MeicanFeature(Feature):
         except ValueError:
             raise FeatureLoginError(f"日期格式不正确：{day_str}")
 
-        cache = db.fdata_get(user_id, self.key, "restaurant_names", default={})
         try:
             if view_id == "status":
                 data = jobs.check_status(payload, target)
                 data.pop("raw_item", None)      # 原始报文太大，前端用不到
                 return data
             if view_id == "recommend":
-                return jobs.recommend(payload, cache, target)
+                cache = jobs.load_cache(user_id)
+                data = jobs.recommend(payload, cache, target)
+                jobs.save_cache(user_id, cache)   # 首次拉取的历史要落库
+                return data
             if view_id == "candidates":
                 return self._candidates_view(payload, target)
         except MeicanError as exc:
