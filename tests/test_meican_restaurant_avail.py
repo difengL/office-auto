@@ -82,6 +82,30 @@ def test_closed_but_has_quota_still_available():
     assert jobs._restaurant_available(_rest("R", "金手勺", False, 56, 0)) is True
 
 
+def test_after_window_status1_still_available():
+    """回归：19:56 实测所有餐厅 open=false、status=1、份数 17~56，却全被置灰。
+
+    status=1 表示「当前不在可下单时段」，会随时段整体翻转，
+    不能当成「这家订满了」。判据只能是剩余份数。
+    """
+    assert jobs._restaurant_available(_rest("R", "金手勺", False, 41, 1)) is True
+    assert jobs._restaurant_available(_rest("R", "切果NOW", False, 39, 1)) is True
+    assert jobs._restaurant_available(_rest("R", "湘行记", False, 17, 1)) is True
+
+
+def test_only_zero_quota_is_unavailable():
+    """无论 status/open 怎么组合，只有份数为 0 才是不可订。"""
+    for status in (0, 1, 2):
+        for open_ in (True, False):
+            assert jobs._restaurant_available(_rest("R", "x", open_, 5, status)) is True
+            assert jobs._restaurant_available(_rest("R", "x", open_, 0, status)) is False
+
+
+def test_missing_quota_field_treated_available():
+    """字段没返回时不能凭空空置灰。"""
+    assert jobs._restaurant_available({"name": "x", "restaurantStatus": 2}) is True
+
+
 # ---------- 下单拦截不可订 ----------
 
 @pytest.fixture(autouse=True)

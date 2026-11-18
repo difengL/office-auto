@@ -20,6 +20,11 @@ class MeicanFeature(Feature):
     credential_kind = CredentialKind.INTERACTIVE
     # 登录时会尝试拿 remember cookie（约 1 年），有它就能自动续期
     can_relogin = True
+    # 当天菜单与剩余份数全企业共享，拉一次缓存给所有人用。但份数会随
+    # 别人下单实时减少、餐厅订满后状态也变，缓存久了会让「可订/已订满」
+    # 与实际不符。每 5 分钟无条件重拉一次，让界面状态贴近真实。
+    # 这个任务与用户无关——借用任一有效凭据即可，不占用户的任务列表。
+    shared_cache_interval = 300
     credential_fields = [
         FieldSpec("phone", "手机号", type="text"),
         FieldSpec("code", "短信验证码", type="text",
@@ -278,3 +283,40 @@ class MeicanFeature(Feature):
                 "dish_limit": c.dish_limit, "available_count": c.available_count,
             } for c in cands],
         }
+
+    # ---------- 共享缓存刷新（与用户无关的后台任务） ----------
+
+    def refresh_shared_cache(self, payloads: list[dict]) -> str:
+        """重拉当天菜单与份数，写回全局缓存。
+
+        缓存按「企业 namespace + 餐次时间」分键，同企业多份凭据指向
+        同一份数据，所以先取餐次算出键、判重，再决定要不要真拉菜单。
+        """
+        if not payloads:
+            return "没有可用凭据，跳过"
+        today = date.today()
+        done: dict[str, int] = {}       # 缓存键 → 该企业菜品数
+        fail = 0
+        last_err = ""
+        for payload in payloads:
+            client = jobs._client(payload)
+            try:
+                item = jobs.today_meal_item(client, today)
+                if not item:
+                    continue
+                key = jobs._menu_cache_key(today, item)
+                if key in done:
+                    continue           # 同企业已经刷过，不重复打接口
+                _, raw = jobs.refresh_menu_cache(client, today)
+            except MeicanError as exc:
+                fail += 1
+                last_err = str(exc)
+                continue
+            done[key] = len(raw)
+        if not done:
+            if fail:
+                return f"菜单缓存刷新失败：{last_err}"
+            return "今天没有可订餐次，跳过"
+        dishes = sum(done.values())
+        note = f"，{fail} 份凭据失败" if fail else ""
+        return f"已刷新 {len(done)} 个企业的菜单缓存（{dishes} 道菜{note}）"

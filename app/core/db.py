@@ -548,6 +548,24 @@ def credential_pairs() -> list[tuple[int, str]]:
     return [(r["user_id"], r["feature_key"]) for r in rows]
 
 
+def active_credential_payloads(feature_key: str) -> list[dict]:
+    """某功能下所有「有效」凭据的明文 payload。
+
+    共享缓存刷新用：它不针对某个用户，而是借用任意一份有效凭据
+    把全企业共享的菜单/份数拉新。失效凭据打不通接口，直接跳过。
+    """
+    with conn() as c:
+        rows = c.execute(
+            "SELECT user_id, payload FROM feature_credentials"
+            " WHERE feature_key=? AND state=?", (feature_key, STATE_ACTIVE)).fetchall()
+    out = []
+    for r in rows:
+        p = decrypt_dict(r["payload"])
+        if p:
+            out.append(p)
+    return out
+
+
 # ---------------- 功能 KV ----------------
 
 def fdata_get(user_id: int, feature_key: str, key: str, default=None):

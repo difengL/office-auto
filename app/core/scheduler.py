@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import random
+from datetime import datetime
 
 from apscheduler.schedulers.base import STATE_STOPPED
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -110,8 +111,60 @@ def reschedule_user(user_id: int) -> None:
             )
 
 
+def shared_job_id(feature_key: str) -> str:
+    return f"shared:{feature_key}"
+
+
+def _schedule_shared(feature) -> None:
+    """挂上功能级的共享缓存刷新任务（与用户无关）。
+
+    为什么不挂在某个用户下：缓存是全企业共享的一份数据，谁登录着
+    都该刷新。若绑在用户任务上，那个用户一旦登出，别人的界面就开始
+    读到过期份数。用独立 job id 也避免和用户任务的删除逻辑互相干扰。
+    """
+    jid = shared_job_id(feature.key)
+    if not feature.shared_cache_interval:
+        job = scheduler.get_job(jid)
+        if job:
+            job.remove()
+        return
+    # 启动后立刻刷一次：间隔触发默认要等满一个周期才首次执行，
+    # 重启后最坏会空窗 5 分钟仍在读旧份数
+    scheduler.add_job(
+        _run_shared_cache, "interval",
+        seconds=feature.shared_cache_interval,
+        args=[feature.key], id=jid, replace_existing=True,
+        next_run_time=datetime.now(scheduler.timezone),
+    )
+
+
+async def _run_shared_cache(feature_key: str) -> None:
+    """刷新共享缓存。不写运行记录——这是基础设施，不该出现在用户的记录里。"""
+    import asyncio
+
+    def work() -> None:
+        feature = registry.get(feature_key)
+        if feature is None or not feature.shared_cache_interval:
+            return
+        payloads = db.active_credential_payloads(feature_key)
+        if not payloads:
+            return
+        try:
+            msg = feature.refresh_shared_cache(payloads)
+            if msg and "失败" in msg:
+                print(f"[cache] {feature_key}: {msg}", flush=True)
+        except Exception as exc:  # noqa: BLE001 - 后台任务不能把调度器打挂
+            print(f"[cache] {feature_key} 刷新异常：{type(exc).__name__}: {exc}",
+                  flush=True)
+
+    try:
+        await asyncio.to_thread(work)
+    except Exception:  # noqa: BLE001
+        pass
+
+
 def reschedule_all() -> None:
-    """重建所有用户的任务。
+    """重建所有用户的任务，并挂上功能级共享任务。
 
     不能只看 enabled_feature_pairs：常开任务（保活）在开关关闭、
     用户从未保存过配置时也要跑，所以所有有凭据的用户都要覆盖到。
@@ -119,6 +172,8 @@ def reschedule_all() -> None:
     pairs = set(db.enabled_feature_pairs()) | set(db.credential_pairs())
     for user_id in {u for u, _k in pairs}:
         reschedule_user(user_id)
+    for feature in registry.all():
+        _schedule_shared(feature)
 
 
 def next_run(user_id: int, feature_key: str, jid: str) -> str | None:

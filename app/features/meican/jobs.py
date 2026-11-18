@@ -107,19 +107,22 @@ def find_meal_item(items: list[dict]) -> dict | None:
 
 
 def _restaurant_available(r: dict) -> bool:
-    """餐厅是否可订（是否订满）。订满的餐厅在手机端显示灰色。
+    """餐厅是否还能下单。判据只有一个：还有没有剩余份数。
 
-    实测：订满餐厅 availableDishCount=0、restaurantStatus=2（如辣嘴鸭 60/0）；
-    正常餐厅 availableDishCount>0、restaurantStatus=0。
-    注意 open=false 只表示「当前不在营业时段」（如过了 16:00 订餐窗口），
-    不代表订满——此时 availableDishCount 仍 >0，不能据此判不可订。
-    字段缺失时保守视为可订。
+    实测三种组合：
+      - 营业时段内、有份数：open=true,  availableDishCount>0, status=0 → 可订
+      - 过了订餐窗口(16:00)：open=false, availableDishCount>0, status=1 → 仍可订
+      - 订满：               open=false, availableDishCount=0, status=2 → 不可订
+
+    status=1/2 与 open=false 都只是「当前不在可下单时段」的侧面表现，
+    会随时间和时段整体变化；把它们当判据会在 16:00 后误把所有餐厅置灰。
+    唯一能区分「这家订满了」和「现在整体不接单」的，是剩余份数。
+
+    字段缺失时保守视为可订——宁可让用户点一下收到后端的明确报错，
+    也不要因为字段没返回就凭空置灰。
     """
-    if r.get("availableDishCount") == 0:
-        return False
-    if r.get("restaurantStatus") not in (None, 0):
-        return False
-    return True
+    avail = r.get("availableDishCount")
+    return avail is None or avail > 0
 
 
 def build_candidates(client: MeicanClient, item: dict, max_price: float) -> list[DishCandidate]:
@@ -157,12 +160,47 @@ def _menu_cache_key(target_day: date, item: dict) -> str:
     return f"meican:menu:{target_day.isoformat()}:{ns}:{_target_time_str(item)}"
 
 
+def candidates_to_raw(cands: list[DishCandidate]) -> list[dict]:
+    return [{"restaurant_name": c.restaurant_name, "restaurant_id": c.restaurant_id,
+             "dish_id": c.dish_id, "dish_name": c.dish_name, "price": c.price,
+             "available": c.available, "dish_limit": c.dish_limit,
+             "available_count": c.available_count}
+            for c in cands]
+
+
+def today_meal_item(client: MeicanClient, target_day: date) -> dict:
+    """取当天餐次。返回 {} 表示当天没有可订餐次。"""
+    days = client.calendar_items(target_day, target_day, with_order=True)
+    if not days or not days[0].get("calendarItemList"):
+        return {}
+    return find_meal_item(days[0]["calendarItemList"]) or {}
+
+
+def refresh_menu_cache(client: MeicanClient, target_day: date) -> tuple[dict, list[dict]]:
+    """强制重拉当天菜单与份数并写回缓存。返回 (餐次item, 原始候选)。
+
+    与 get_candidates_cached 的区别：不看 TTL，总是打接口。
+    份数（availableDishCount）会随别人下单实时变化，所以需要定期刷。
+    """
+    from app.core import db
+    item = today_meal_item(client, target_day)
+    if not item:
+        return {}, []
+
+    raw = candidates_to_raw(build_candidates(client, item, max_price=0))
+    db.gdata_set(_menu_cache_key(target_day, item),
+                 {"ts": time.time(), "candidates": raw})
+    return item, raw
+
+
 def get_candidates_cached(payload: dict, target_day: date,
-                          max_price: float = 0) -> tuple[list[DishCandidate], dict]:
+                          max_price: float = 0,
+                          refresh: bool = False) -> tuple[list[DishCandidate], dict]:
     """取当天可订菜品，优先用全局共享缓存。返回 (候选列表, 餐次item)。
 
     缓存键含日期+企业namespace+餐次时间：同企业用户共享，不同企业互不干扰。
     max_price 在缓存之上过滤（缓存存全量，限价各用户可能不同）。
+    refresh=True 时跳过 TTL 强制刷新（后台定时任务用）。
     """
     from app.core import db
     client = _client(payload)
@@ -175,16 +213,10 @@ def get_candidates_cached(payload: dict, target_day: date,
 
     key = _menu_cache_key(target_day, item)
     cached = db.gdata_get(key)
-    if cached and time.time() - cached.get("ts", 0) < MENU_TTL:
+    if not refresh and cached and time.time() - cached.get("ts", 0) < MENU_TTL:
         raw = cached["candidates"]
     else:
-        full = build_candidates(client, item, max_price=0)   # 缓存存全量
-        raw = [{"restaurant_name": c.restaurant_name, "restaurant_id": c.restaurant_id,
-                "dish_id": c.dish_id, "dish_name": c.dish_name, "price": c.price,
-                "available": c.available, "dish_limit": c.dish_limit,
-                "available_count": c.available_count}
-               for c in full]
-        db.gdata_set(key, {"ts": time.time(), "candidates": raw})
+        item, raw = refresh_menu_cache(client, target_day)
 
     out = []
     for c in raw:

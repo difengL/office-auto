@@ -179,6 +179,20 @@ class Feature(ABC):
         """
         return False
 
+    # ---------- 全局共享缓存 ----------
+
+    # 本功能是否存在「所有用户共用同一份」的缓存，以及刷新周期（秒）。
+    # 0 表示没有。设了值的功能会得到一个与用户无关的后台任务。
+    shared_cache_interval: int = 0
+
+    def refresh_shared_cache(self, payloads: list[dict]) -> str:
+        """用有效凭据刷新共享缓存。payloads 是该功能的全部有效凭据。
+
+        缓存按企业/命名空间分键，多份凭据可能指向同一份数据，
+        插件自行去重。返回给日志看的简述。
+        """
+        return ""
+
     # ---------- 功能专属设置（如 HEM 的逐日工时） ----------
 
     def get_settings(self, user_id: int) -> dict | None:
