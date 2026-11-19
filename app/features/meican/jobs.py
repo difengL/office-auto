@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 import time
 from datetime import date, datetime, timedelta
+from datetime import time as dt_time
 
 from app.core.feature import JobResult
 
@@ -164,35 +165,68 @@ def _unavailable_summary(cands: list[dict]) -> str:
     return "、".join(parts)
 
 
-def restaurant_unavailable_reason(r: dict) -> str:
+def within_order_window(item: dict, now: datetime | None = None) -> bool:
+    """当前是否在餐次的订餐窗口内（默认 09:00–16:00）。
+
+    窗口是餐次自带的 openingTime.openTime/closeTime，不是餐厅的 open 字段：
+    已订餐时餐厅列表的 open 会被整体置 false，已经不能用来判断时间了。
+    缺字段时保守返回 True，交给后端给明确报错。
+    """
+    opening = item.get("openingTime") or {}
+    start = opening.get("openTime")
+    end = opening.get("closeTime")
+    if not start or not end:
+        return True
+    now = now or datetime.now()
+
+    def _hm(v: str) -> dt_time | None:
+        try:
+            h, m = v.split(":")[:2]
+            return dt_time(int(h), int(m))
+        except (ValueError, AttributeError):
+            return None
+
+    t0, t1 = _hm(start), _hm(end)
+    if t0 is None or t1 is None:
+        return True
+    return t0 <= now.time() <= t1
+
+
+def restaurant_unavailable_reason(r: dict, *, window_open: bool = True,
+                                  already_ordered: bool = False) -> str:
     """餐厅为什么不能下单。返回 "" 表示可订。
 
     依据美餐前端源码（demeter-fe/82b73ae.js: generateRestaurantSections）：
         var e = !t.open,                    // isDisabled
             a = t.availableDishCount <= 0;  // isDisabledByRestaurantCount
-    两处分别对应不同提示文案（afd1e10.js）：
-        isDisabledByRestaurantCount → restaurant_status_exceed_limit
-            「很抱歉，当前已超过餐厅的点餐限额」
-        isDisabled                 → restaurant_status_close
-            「很抱歉，该餐厅已经关闭点餐」
+    afd1e10.js 里两处对应不同文案：
+        isDisabledByRestaurantCount → restaurant_status_exceed_limit「已超过点餐限额」
+        isDisabled                 → restaurant_status_close「该餐厅已经关闭点餐」
 
-    所以这是两个并列的原因，不能合并成一个布尔值——「份数用完」和
-    「不在供餐时段」对用户的含义不同，提示也该不同。
+    **但 `open` 有两种含义，必须靠上下文区分**（2026-11-19 踩坑）：
+    - 未订餐：open=false 是餐厅真的不在供餐时段 / 关闭点餐
+    - 已订餐：餐次状态变 ORDER，美餐把整列表 open 置 false。源码
+      aa22780.js: `"AVAILABLE" !== o.status && (o.isAvailable = !1)`
+      实测：12:30 已订餐时 9 家 open 全 false，但份数还有 37~86、
+      restaurantStatus 仍为 0——这时是「下单入口关闭」，不是打烊。
+      此时只要还在订餐窗口内，就可以更换订单。
 
-    restaurantStatus 是总状态（1=关闭点餐, 2=超限），与上面两个标记
-    是一致的，但单看它无法区分原因，故仍以前端同源的 open/份数为主，
-    status 仅作兜底：万一 open/count 字段缺失但 status 明示不可订，
-    也不该放行。
+    因此判断顺序：
+    1. 份数为 0 → sold_out（与订没订无关）
+    2. 不在订餐窗口 → closed
+    3. restaurantStatus 明示关闭/超限 → 对应原因（已订餐也要认，换到关闭的店没意义）
+    4. open=false 且未订餐 → closed；已订餐则放行
     """
     avail = r.get("availableDishCount")
     if avail is not None and avail <= 0:
         return "sold_out"
-    if r.get("open") is False:
+    if not window_open:
         return "closed"
-    # 兜底：字段缺失但总状态明示不可订
     status = r.get("restaurantStatus")
     if status is not None and status not in (0,):
         return "sold_out" if status == 2 else "closed"
+    if r.get("open") is False and not already_ordered:
+        return "closed"
     return ""
 
 
@@ -217,13 +251,21 @@ def unavailable_message(restaurant_name: str, reason: str) -> str:
     return f"「{name}」已订满或已关闭点餐，无法下单"
 
 
-def build_candidates(client: MeicanClient, item: dict, max_price: float) -> list[DishCandidate]:
+def build_candidates(client: MeicanClient, item: dict, max_price: float,
+                     window_open: bool = True) -> list[DishCandidate]:
     tab = (item.get("userTab") or {}).get("uniqueId")
     tt = _target_time_str(item)
+    # 是否已订餐决定 open=false 的含义，取餐次自带的 corpOrderUser
+    ordered = bool(item.get("corpOrderUser"))
     out: list[DishCandidate] = []
     for r in client.restaurants(tab, tt):
-        reason = restaurant_unavailable_reason(r)
+        reason = restaurant_unavailable_reason(
+            r, window_open=window_open, already_ordered=ordered)
         avail = not reason
+        # 已订餐时服务端把 open 一律置 false，这个值只反映「我下过单」，
+        # 不是餐厅状态。标成 None（未知）而不是存 false——否则写进全局
+        # 共享缓存会污染其他未订餐的用户。
+        raw_open = r.get("open") if not ordered else None
         try:
             menu = client.restaurant_menu(r["uniqueId"], tab, tt)
         except MeicanError:
@@ -239,6 +281,8 @@ def build_candidates(client: MeicanClient, item: dict, max_price: float) -> list
                                      available=avail,
                                      dish_limit=r.get("dishLimit"),
                                      available_count=r.get("availableDishCount"),
+                                     restaurant_open=raw_open,
+                                     restaurant_status=r.get("restaurantStatus"),
                                      unavailable_reason=reason))
     return out
 
@@ -248,19 +292,56 @@ def build_candidates(client: MeicanClient, item: dict, max_price: float) -> list
 MENU_TTL = 6 * 3600        # 菜单缓存 6 小时（当天菜单基本不变）
 
 
+# 缓存结构版本。v2 起不再存 available（用户态），改为存客观字段现算。
+# 老版本条目读到时字段对不上，直接当未命中重拉，避免新旧混用。
+MENU_CACHE_VERSION = 2
+
+
 def _menu_cache_key(target_day: date, item: dict) -> str:
     corp = (item.get("userTab") or {}).get("corp") or {}
     ns = corp.get("namespace") or corp.get("uniqueId") or "default"
-    return f"meican:menu:{target_day.isoformat()}:{ns}:{_target_time_str(item)}"
+    return (f"meican:menu:v{MENU_CACHE_VERSION}:"
+            f"{target_day.isoformat()}:{ns}:{_target_time_str(item)}")
 
 
 def candidates_to_raw(cands: list[DishCandidate]) -> list[dict]:
+    """序列化候选写进全局共享缓存。
+
+    刻意**不存 available / unavailable_reason**：这两项依赖用户自己的状态
+    （有没有订餐），而缓存是全企业共享的。存进去会让「已订餐」用户的结论
+    污染「未订餐」用户。读取时由 apply_availability 现算。
+    这里只保留 open 原始值，以及份数、餐厅自报状态等客观字段。
+    """
     return [{"restaurant_name": c.restaurant_name, "restaurant_id": c.restaurant_id,
              "dish_id": c.dish_id, "dish_name": c.dish_name, "price": c.price,
-             "available": c.available, "dish_limit": c.dish_limit,
+             "dish_limit": c.dish_limit,
              "available_count": c.available_count,
-             "unavailable_reason": c.unavailable_reason}
+             "restaurant_open": c.restaurant_open,
+             "restaurant_status": c.restaurant_status}
             for c in cands]
+
+
+def apply_availability(raw: list[dict], item: dict,
+                       now: datetime | None = None) -> list[dict]:
+    """按「是否已订餐 + 是否在订餐窗口」现算每道菜的可订状态。
+
+    放在读取时算而不是写缓存时算，是因为缓存跨用户共享，而这两项都是
+    用户/时刻相关的量。
+    """
+    window_open = within_order_window(item, now)
+    ordered = bool(item.get("corpOrderUser"))
+    out = []
+    for c in raw:
+        # restaurant_open 为 None 表示「服务端没给可信值」（拉缓存的用户
+        # 当时已订餐，open 被整体置 false）。此时不要把 None 当 false——
+        # 让 restaurant_unavailable_reason 走保守分支。
+        r = {"open": c.get("restaurant_open"),
+             "availableDishCount": c.get("available_count"),
+             "restaurantStatus": c.get("restaurant_status")}
+        reason = restaurant_unavailable_reason(
+            r, window_open=window_open, already_ordered=ordered)
+        out.append({**c, "available": not reason, "unavailable_reason": reason})
+    return out
 
 
 def today_meal_item(client: MeicanClient, target_day: date) -> dict:
@@ -282,7 +363,8 @@ def refresh_menu_cache(client: MeicanClient, target_day: date) -> tuple[dict, li
     if not item:
         return {}, []
 
-    raw = candidates_to_raw(build_candidates(client, item, max_price=0))
+    raw = candidates_to_raw(build_candidates(
+        client, item, max_price=0, window_open=within_order_window(item)))
     db.gdata_set(_menu_cache_key(target_day, item),
                  {"ts": time.time(), "candidates": raw})
     return item, raw
@@ -313,6 +395,8 @@ def get_candidates_cached(payload: dict, target_day: date,
     else:
         item, raw = refresh_menu_cache(client, target_day)
 
+    # 可订状态是用户/时刻相关的，缓存里只有客观字段，这里现算
+    raw = apply_availability(raw, item)
     out = []
     for c in raw:
         if max_price and c["price"] > max_price:

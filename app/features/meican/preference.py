@@ -41,6 +41,11 @@ class DishCandidate:
     available: bool = True        # 餐厅是否可订（订满/打烊为 False，前端置灰）
     dish_limit: int | None = None      # 餐厅总份数上限
     available_count: int | None = None  # 剩余可订份数
+    # 餐厅下发的原始状态字段，供缓存复用与后续重算。
+    # open 在「已订餐」时会被服务端一律置 false，那不代表餐厅打烊，
+    # 此时记为 None（未知），避免写入共享缓存污染其他用户。
+    restaurant_open: bool | None = None
+    restaurant_status: int | None = None
     # 不可订的具体原因，与美餐前端的两套文案一致：
     #   sold_out → restaurant_status_exceed_limit「已超过餐厅的点餐限额」
     #   closed   → restaurant_status_close「该餐厅已经关闭点餐」

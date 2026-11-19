@@ -129,6 +129,42 @@ remember 本身约 2 个月有效，到期前保活会一直用它续期；到�
 **先判餐次，再判餐厅。** 餐次 `NOT_YET` 时餐厅列表的 `open` 全为 `false`，
 若跳过餐次判断直接看餐厅，就会把「还没开放」误报成「餐厅打烊」。
 
+### `open` 有两种含义（2026-11-19 踩坑）
+
+`restaurants/list` 返回的 `open` 不能单独当「餐厅是否打烊」：
+
+| 场景 | open | 份数 | 真实含义 |
+|---|---|---|---|
+| 未订餐、窗口内 | `true` | >0 | 正常可订 |
+| 未订餐、窗口外 | `false` | >0 | 餐厅已关闭点餐 |
+| **已订餐** | **`false`** | **>0** | **我下过单，入口关闭**，餐厅仍营业 |
+
+前端 `aa22780.js` 明确写着：
+```js
+return "AVAILABLE" !== o.status && (o.isAvailable = !1), o
+```
+餐次状态一旦变成 `ORDER`，整列表 `isAvailable` 被置 false，下发的 `open`
+也就全 false。实测 12:30 已订餐时 9 家 `open` 全 false，但份数仍有 37~86、
+`restaurantStatus` 仍为 0。
+
+**所以判断顺序是**：
+1. 份数为 0 → `sold_out`（与订没订无关）
+2. 不在订餐窗口内 → `closed`
+3. `restaurantStatus` 明示关闭/超限 → 对应原因（已订餐也要认，换到关闭的店没意义）
+4. `open=false` 且未订餐 → `closed`；**已订餐则放行**（可更换）
+
+订餐窗口取餐次的 `openingTime.openTime/closeTime`（本项目 09:00–16:00），
+**不能用餐厅 `open` 判断时间**——已订餐时它恒为 false。
+
+### 共享缓存不能存用户态
+
+`available` 取决于「我自己有没有订餐」，而菜单缓存是全企业共享的。
+因此缓存只存客观字段（份数、`open`、`restaurantStatus`），读取时由
+`apply_availability(raw, item)` 结合当前用户的订餐状态与窗口时间现算。
+采缓存那个用户若已订餐，其 `open` 全 false 且不可信，写进缓存时记为
+`None`（未知）而非 `False`，避免污染其他用户。缓存键带 `v2` 版本号，
+老结构条目自然失效重拉。
+
 前端对应 `82b73ae.js` 的 `switch(t.status)` 与 `generateRestaurantSections`；
 餐次文案见 `afd1e10.js` 的 `order_status_not_yet`「未开放」/
 `order_status_close`「已关闭」/ `order_status_sold_out`「已售罄」。
