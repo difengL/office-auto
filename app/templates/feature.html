@@ -520,22 +520,35 @@ function renderMealList(d){
   if(d.error) return `<span class="err">${esc(d.error)}</span>`;
   let html = '';
   if(mealTab==='recommend' && d.history_summary) html += renderHistorySummary(d.history_summary);
+  // 餐次本身未开放/已关闭：顶部统一说明，菜品按钮也用对应文案，
+  // 避免把「还没到预订时间」显示成一堆「已关闭」误导用户。
+  if(d.slot_note) html += renderSlotNote(d);
   const cands = d.candidates || [];
   if(!cands.length) return html + '<div class="muted">没有可订菜品。</div>';
   html += `<div class="muted" style="margin-bottom:10px">共 ${d.total_candidates||cands.length} 道${mealTab==='recommend'?'推荐':''}</div>`;
-  html += '<div class="dish-list">' + cands.map(c=>dishRow(c, mealTab==='recommend')).join('') + '</div>';
+  html += '<div class="dish-list">' + cands.map(c=>dishRow(c, mealTab==='recommend', d.slot_reason)).join('') + '</div>';
   return html;
 }
 
-function dishRow(c, withScore){
+function renderSlotNote(d){
+  return `<div class="slot-note">
+    <span class="slot-note-icon">⏰</span>
+    <span>${esc(d.slot_note)}</span>
+  </div>`;
+}
+
+function dishRow(c, withScore, slotReason){
   const score = withScore && c.score!=null
     ? `<span class="score">${c.score.toFixed(1)} 分</span>` : '';
   const reasons = withScore && (c.reasons||[]).length
     ? `<div class="muted reasons">${esc(c.reasons.join(' · '))}</div>` : '';
   const unavailable = c.available === false;
+  // 餐次未开放时份数没有意义（数据是「还没算」不是「已订满」），不展示，
+  // 否则满屏「已订 0/60」会让人误读成售罄。
+  const showQuota = slotReason !== 'not_yet';
   // 份数：已订 = 总上限 - 剩余可用
   let quota = '';
-  if(c.dish_limit != null && c.available_count != null){
+  if(showQuota && c.dish_limit != null && c.available_count != null){
     const used = Math.max(0, c.dish_limit - c.available_count);
     quota = `<span class="quota${unavailable?' full':''}">已订 ${used}/${c.dish_limit}</span>`;
   }
@@ -545,11 +558,14 @@ function dishRow(c, withScore){
   if(isCurrent){
     orderBtn = `<button class="order-btn current" disabled>当前</button>`;
   } else if(unavailable){
-    // 两种原因分开显示，与美餐前端文案一致：
-    // sold_out=超过点餐限额，closed=餐厅已关闭点餐
-    const soldOut = c.unavailable_reason === 'sold_out';
-    const label = soldOut ? '已订满' : (c.unavailable_reason === 'closed' ? '已关闭' : '不可订');
-    const tip = soldOut ? '已超过餐厅的点餐限额' : '该餐厅当前已关闭点餐';
+    // 三种原因分开显示，与美餐前端文案一致：
+    //   sold_out=超过点餐限额，closed=餐厅已关闭点餐，not_yet=餐次未开放预订
+    // 餐次本身没开放时所有餐厅 open 都是 false，必须报「未开放」而不是「已关闭」。
+    const reason = slotReason === 'not_yet' ? 'not_yet' : c.unavailable_reason;
+    const LABELS = {sold_out:['已订满','已超过餐厅的点餐限额'],
+                    closed:['已关闭','该餐厅当前已关闭点餐'],
+                    not_yet:['未开放','尚未到该餐次的预订时间']};
+    const [label, tip] = LABELS[reason] || ['不可订','该菜品当前不可下单'];
     orderBtn = `<button class="order-btn" disabled title="${tip}">${label}</button>`;
   } else {
     const act = todayOrdered ? 'change_order' : 'order_dish';

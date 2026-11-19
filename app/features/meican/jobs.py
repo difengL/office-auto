@@ -16,6 +16,12 @@ from .preference import DishCandidate, PreferenceModel, rank_candidates, summari
 
 STATUS_ORDERED = "ORDER"
 
+# 餐次（calendarItem）的状态。美餐前端 82b73ae.js 的 switch(t.status) 列出：
+#   AVAILABLE / ORDER / CLOSED / NOT_YET / ALL_RESTAURANT_EXCEED
+# 其中只有 AVAILABLE 与 ORDER 能下单；NOT_YET 是「还没到预订时间」，
+# 此时餐厅列表每家 open 都是 false，若当成「餐厅打烊」会得出完全错误的结论。
+SLOT_OPEN_STATUSES = ("AVAILABLE", STATUS_ORDERED)
+
 
 def _client(payload: dict) -> MeicanClient:
     return MeicanClient(payload.get("accessToken"))
@@ -104,6 +110,58 @@ def find_meal_item(items: list[dict]) -> dict | None:
         if "晚餐" in (it.get("title") or ""):
             return it
     return items[0]
+
+
+def slot_unavailable_message(target_day: date, status: str, reason: str = "") -> str:
+    """餐次本身不可下单时给出准确说明。返回 "" 表示餐次开放。
+
+    这一步必须在下单前单独判断：餐次没开放时，餐厅列表里每家 open 都是
+    false，继续往下走会被统一判成「餐厅打烊/订满」，报出与事实相反的原因
+    （2026-11-19 的误报就是这样产生的）。
+    """
+    st = (status or "").upper()
+    if st in SLOT_OPEN_STATUSES or not st:
+        return ""
+    day = target_day.isoformat()
+    detail = f"（{reason}）" if reason else ""
+    if st == "NOT_YET":
+        return f"{day} 的餐次尚未开放预订{detail}"
+    if st == "CLOSED":
+        return f"{day} 的餐次已关闭{detail}"
+    if st == "ALL_RESTAURANT_EXCEED":
+        return f"{day} 所有餐厅均已订满（售罄）{detail}"
+    return f"{day} 的餐次当前不可下单（状态 {status}）{detail}"
+
+
+def slot_unavailable_reason(item: dict) -> str:
+    """餐次级不可订原因代码；"" 表示餐次开放。
+
+    与 restaurant_unavailable_reason 同样拆成两套文案，但这里是餐次
+    本身的问题：NOT_YET 时餐厅列表每家 open 都是 false，若只为餐厅
+    判断，会把「还没到预订时间」误报成「餐厅打烊」。
+    """
+    st = (item.get("status") or "").upper()
+    if st in SLOT_OPEN_STATUSES or not st:
+        return ""
+    if st == "ALL_RESTAURANT_EXCEED":
+        return "sold_out"
+    if st == "CLOSED":
+        return "closed"
+    return "not_yet"
+
+
+def _unavailable_summary(cands: list[dict]) -> str:
+    """统计候选不可订原因，让失败信息能直接指向问题。"""
+    closed = sum(1 for c in cands if c.get("unavailable_reason") == "closed")
+    sold = sum(1 for c in cands if c.get("unavailable_reason") == "sold_out")
+    parts = []
+    if sold:
+        parts.append(f"{sold} 家已订满")
+    if closed:
+        parts.append(f"{closed} 家已关闭点餐")
+    if not parts:
+        return f"共 {len(cands)} 道菜均不可订"
+    return "、".join(parts)
 
 
 def restaurant_unavailable_reason(r: dict) -> str:
@@ -316,6 +374,11 @@ def recommend(payload: dict, cache: dict, target_day: date, limit: int = 5,
         "date": target_day.isoformat(),
         "title": item.get("title"),
         "status": item.get("status"),
+        # 餐次未开放时给一句明确说明，前端在上方统一提示，
+        # 而不是让每道菜都显示「已关闭」。
+        "slot_reason": slot_unavailable_reason(item),
+        "slot_note": slot_unavailable_message(
+            target_day, item.get("status"), item.get("reason", "")),
         "already_ordered": bool(item.get("corpOrderUser")),
         "history_summary": summarize(model),
         "candidates": [{
@@ -340,14 +403,25 @@ def do_order(payload: dict, cache: dict, target_day: date,
     if status.get("ordered"):
         return JobResult(True, f"{target_day} 已订过餐，跳过", {"skipped": True})
 
+    # 先判餐次是否开放。餐次没开时餐厅列表全为 open=false，
+    # 若跳过这步会被误判成「所有餐厅都打烊/订满」。
+    slot_msg = slot_unavailable_message(target_day, status.get("status"),
+                                        status.get("reason", ""))
+    if slot_msg:
+        return JobResult(False, slot_msg, {"slot_status": status.get("status")})
+
     if dish is None:
         rec = recommend(payload, cache, target_day, limit=5, max_price=max_price)
         if rec.get("error"):
             return JobResult(False, rec["error"])
+        cands = rec.get("candidates", [])
         # 自动挑菜只挑可订的（订满/打烊的跳过）
-        avail = [c for c in rec.get("candidates", []) if c.get("available", True)]
+        avail = [c for c in cands if c.get("available", True)]
         if not avail:
-            return JobResult(False, "没有可订的候选菜品（餐厅可能均已订满）")
+            return JobResult(
+                False,
+                f"{target_day} 没有可订的菜品（{_unavailable_summary(cands)}）",
+                {"candidates": len(cands)})
         dish = avail[0]
 
     if not dish.get("available", True):
@@ -395,6 +469,13 @@ def change_order(payload: dict, cache: dict, target_day: date,
     if not status.get("ordered"):
         # 还没订过，直接下新单即可
         return do_order(payload, cache, target_day, dish, dry_run=False)
+
+    # 已经订过餐，下面要先退旧单。餐次不可下单时必须先拦住——
+    # 否则退了旧单又下不了新单，当天就没饭吃了。
+    slot_msg = slot_unavailable_message(target_day, status.get("status"),
+                                        status.get("reason", ""))
+    if slot_msg:
+        return JobResult(False, f"{slot_msg}，未更换（原订单保留）")
 
     client = _client(payload)
     old_order = (status["raw_item"].get("corpOrderUser") or {})

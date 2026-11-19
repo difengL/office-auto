@@ -107,6 +107,34 @@ remember 本身约 2 个月有效，到期前保活会一直用它续期；到�
 
 - 订餐窗口 09:00–16:00，定时任务时间必须落在窗口内。
 - 平台默认工作日 10:05（带 180 秒抖动）。
+- **定时任务订的是当天，不是次日。** 美餐在当天 09:00 才开放当天餐次；
+  次日餐次此时状态为 `NOT_YET`，餐厅列表里每家 `open` 都是 `false`。
+  若订次日，任务会天天失败并报「餐厅均订满」，而当天其实全部可订
+  （2026-11-19 踩过这个坑）。
+
+## 餐次状态 vs 餐厅状态
+
+两层状态必须分开判断，否则会得出与事实相反的结论：
+
+| 层级 | 字段 | 取值 | 含义 |
+|---|---|---|---|
+| 餐次 | `calendarItem.status` | `AVAILABLE` / `ORDER` | 可下单 |
+| | | `NOT_YET` | 还没到预订时间 |
+| | | `CLOSED` | 该餐次已关闭 |
+| | | `ALL_RESTAURANT_EXCEED` | 全部餐厅售罄 |
+| 餐厅 | `open` | `false` | 餐厅不在供餐时段 |
+| | `availableDishCount` | `0` | 已超过点餐限额 |
+| | `restaurantStatus` | `1` / `2` | 总状态，仅在前两字段缺失时兜底 |
+
+**先判餐次，再判餐厅。** 餐次 `NOT_YET` 时餐厅列表的 `open` 全为 `false`，
+若跳过餐次判断直接看餐厅，就会把「还没开放」误报成「餐厅打烊」。
+
+前端对应 `82b73ae.js` 的 `switch(t.status)` 与 `generateRestaurantSections`；
+餐次文案见 `afd1e10.js` 的 `order_status_not_yet`「未开放」/
+`order_status_close`「已关闭」/ `order_status_sold_out`「已售罄」。
+
+`change_order` 必须先过餐次判断再退旧单——否则退了旧单下不了新单，
+当天就没饭吃了。
 
 ## 偏好算法
 

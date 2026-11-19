@@ -173,7 +173,10 @@ class MeicanFeature(Feature):
 
         if job_id == "order":
             cache = jobs.load_cache(user_id)
-            days = int(ctx.options.get("target_offset_days", 1))
+            # 默认订当天。订次日是不成立的：美餐在当天 09:00 才开放当天餐次，
+            # 次日餐次此时状态为 NOT_YET，餐厅列表每家 open 都是 false，
+            # 于是任务天天报「餐厅均订满」而实际当天完全可订。
+            days = int(ctx.options.get("target_offset_days", 0))
             target = date.today() + timedelta(days=days)
             # 演练模式已移除：定时订餐一律真实下单
             result = jobs.do_order(payload, cache, target, None, dry_run=False)
@@ -274,6 +277,12 @@ class MeicanFeature(Feature):
         return {
             "date": target.isoformat(),
             "title": item.get("title"),
+            # 餐次本身的状态：NOT_YET 时所有餐厅的 open 都是 false，
+            # 前端据此显示「尚未开放」而不是「已关闭」，免得误导。
+            "status": item.get("status"),
+            "slot_reason": jobs.slot_unavailable_reason(item),
+            "slot_note": jobs.slot_unavailable_message(
+                target, item.get("status"), item.get("reason", "")),
             "already_ordered": bool(item.get("corpOrderUser")),
             "total_candidates": len(cands),
             "candidates": [{
