@@ -58,9 +58,9 @@ def test_phone_field_has_no_action():
 
 def test_send_sms_calls_client_with_phone(fake):
     u = db.create_user("u1", "HASH", "U1")
-    msg = asyncio.run(MeicanFeature().send_action(u.id, "send_sms", {"phone": "17600610776"}))
+    msg = asyncio.run(MeicanFeature().send_action(u.id, "send_sms", {"phone": "13800138000"}))
 
-    assert fake.instances[0].sent_to == ["17600610776"]
+    assert fake.instances[0].sent_to == ["13800138000"]
     assert "验证码已发送" in msg
 
 
@@ -74,12 +74,12 @@ def test_send_sms_wraps_client_error(fake):
     u = db.create_user("u3", "HASH", "U3")
     fake.fail = True
     with pytest.raises(FeatureLoginError, match="发送验证码失败"):
-        asyncio.run(MeicanFeature().send_action(u.id, "send_sms", {"phone": "17600610776"}))
+        asyncio.run(MeicanFeature().send_action(u.id, "send_sms", {"phone": "13800138000"}))
 
 
 def test_send_sms_warns_about_rate_limit(fake):
     u = db.create_user("u4", "HASH", "U4")
-    msg = asyncio.run(MeicanFeature().send_action(u.id, "send_sms", {"phone": "17600610776"}))
+    msg = asyncio.run(MeicanFeature().send_action(u.id, "send_sms", {"phone": "13800138000"}))
     # 美餐发码静默限流，必须提示用户，否则会以为程序坏了
     assert "限流" in msg
 

@@ -1464,7 +1464,7 @@ def test_login_stores_token_from_client(monkeypatch):
 
     monkeypatch.setattr("app.features.meican.feature.MeicanClient", lambda: FakeClient())
     u = db.create_user("m1", "H", "M")
-    payload = {"phone": "17600610776", "code": "1234"}
+    payload = {"phone": "13800138000", "code": "1234"}
     info = asyncio.run(f.login(u.id, payload))
     assert info["display"] == "张三"
     # 一次性验证码不得留在 payload 里

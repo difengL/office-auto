@@ -96,14 +96,14 @@ def _client(http):
 def test_oauth_token_with_code_sends_remember_param():
     http = FakeHTTP(remember="RM1")
     c = _client(http)
-    got = c.oauth_token_with_code("17600610776", "1234")
+    got = c.oauth_token_with_code("13800138000", "1234")
 
     call = http.calls[0]
     assert call["url"].endswith("/oauth/token")
     assert call["params"].get("remember") == "true"
     assert call["data"]["grant_type"] == "password"
     assert call["data"]["meican_credential_type"] == "mobile_verify_code"
-    assert call["data"]["mobile"] == "17600610776"
+    assert call["data"]["mobile"] == "13800138000"
     assert call["data"]["verifyCode"] == "1234"
     assert got["remember"] == "RM1"
 
@@ -220,10 +220,10 @@ def test_login_falls_back_to_graphql_when_v3_fails(monkeypatch):
 def test_send_sms_code_v3_uses_mobileNumber_field():
     http = FakeHTTP()
     c = _client(http)
-    c.send_sms_code_v3("17600610776")
+    c.send_sms_code_v3("13800138000")
     call = http.calls[0]
     assert call["url"].endswith("/accounts/sendVerifyCode")
-    assert call["data"] == {"mobileNumber": "17600610776"}
+    assert call["data"] == {"mobileNumber": "13800138000"}
 
 
 def test_send_sms_code_v3_reports_throttle():
@@ -233,4 +233,4 @@ def test_send_sms_code_v3_reports_throttle():
 
     c = _client(ThrottleHTTP())
     with pytest.raises(MeicanError, match="44 秒"):
-        c.send_sms_code_v3("17600610776")
+        c.send_sms_code_v3("13800138000")

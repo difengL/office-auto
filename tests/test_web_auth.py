@@ -128,7 +128,7 @@ def ka_client(tmp_path, monkeypatch):
 
 def test_runs_hide_always_on_jobs(ka_client):
     ka_client.post("/api/register", json={"username": "k1", "password": "pw123456"})
-    ka_client.post("/api/features/ka/login", json={"phone": "17600610776"})
+    ka_client.post("/api/features/ka/login", json={"phone": "13800138000"})
     # 直接写运行记录：保活 + 业务各若干
     u = db.get_user_by_username("k1")
     for _ in range(5):
@@ -143,13 +143,13 @@ def test_runs_hide_always_on_jobs(ka_client):
 
 def test_display_falls_back_to_phone(ka_client):
     ka_client.post("/api/register", json={"username": "k2", "password": "pw123456"})
-    ka_client.post("/api/features/ka/login", json={"phone": "17600610776"})
+    ka_client.post("/api/features/ka/login", json={"phone": "13800138000"})
     u = db.get_user_by_username("k2")
     # 模拟美餐 v3：userName 为空，只有 phone
-    db.save_credential(u.id, "ka", {"phone": "17600610776", "userName": ""}, "active")
+    db.save_credential(u.id, "ka", {"phone": "13800138000", "userName": ""}, "active")
 
     detail = ka_client.get("/api/features/ka").json()
-    assert detail["display"] == "17600610776"
+    assert detail["display"] == "13800138000"
 
 
 # ---------- 主页面「下次执行」不得暴露保活 ----------
@@ -161,7 +161,7 @@ def test_index_next_run_hidden_when_schedule_disabled(ka_client):
     直接把 jobs 的 next_run 拿来展示，导致「定时关闭」却显示下次执行时间。
     """
     ka_client.post("/api/register", json={"username": "k3", "password": "pw123456"})
-    ka_client.post("/api/features/ka/login", json={"phone": "17600610776"})
+    ka_client.post("/api/features/ka/login", json={"phone": "13800138000"})
 
     f = next(x for x in ka_client.get("/api/features").json()["features"]
              if x["key"] == "ka")
@@ -177,7 +177,7 @@ def test_index_next_run_hidden_when_schedule_disabled(ka_client):
 
 def test_index_next_run_shows_business_job_when_enabled(ka_client):
     ka_client.post("/api/register", json={"username": "k4", "password": "pw123456"})
-    ka_client.post("/api/features/ka/login", json={"phone": "17600610776"})
+    ka_client.post("/api/features/ka/login", json={"phone": "13800138000"})
     ka_client.post("/api/features/ka/config",
                    json={"enabled": True, "dry_run": False, "schedule": {}, "options": {}})
 
